@@ -108,7 +108,7 @@ else
   success "Session file found — skipping interactive login."
   echo ""
   info "Starting Alice with pm2..."
-  pm2 start ecosystem.config.cjs --only alice-runtime
+  pm2 startOrRestart ecosystem.config.cjs --only alice-runtime
   pm2 status
   echo ""
   success "Alice is running!"
