@@ -156,6 +156,40 @@ sqlite3 runtime/alice.db "SELECT tick, voice, action_type, chat_id, confidence F
 
 If you see tick_log entries with growing pressure values and occasional action_log entries — Alice is alive.
 
+## Optional: Skill Runner Docker Image
+
+Alice's skill sandbox uses a Docker container for isolated execution. This is required if you want Alice to run skills (weather, music, search, etc.) in a sandboxed environment.
+
+```bash
+# Build the skill runner image
+cd runtime
+docker build -t alice-skill-runner:bookworm -f Dockerfile.skill-runner .
+```
+
+The container runs as an unprivileged `alice` user with:
+- Node.js 22 + Python 3 + common CLI tools (curl, jq, git, etc.)
+- `/opt/alice/bin` — Alice skill binaries (mounted read-only at runtime)
+- `/workspace` — isolated working directory per execution
+- No network access to the host by default (except via `host.docker.internal`)
+
+### With gVisor (Recommended for Production)
+
+For stronger sandbox isolation, install [gVisor](https://gvisor.dev/docs/user_guide/install/):
+
+```bash
+# Install runsc
+bash runtime/scripts/install-runsc.sh
+
+# Verify
+docker run --runtime=runsc hello-world
+```
+
+Then set `SKILL_BACKEND=sandboxed` in `.env` to use gVisor for skill execution.
+
+### Without Docker
+
+If Docker is not available, Alice falls back to direct shell execution (`SKILL_BACKEND=shell`). Less isolated but functional.
+
 ## Optional: systemd (Production Server)
 
 For a hardened production deployment, see `runtime/deploy/systemd/`:
