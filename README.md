@@ -202,14 +202,40 @@ The whole system runs on a tick loop. Every tick, the pressure field evolves. Wh
 ## Quick Start
 
 ```bash
-git clone --recurse-submodules https://github.com/LlmKira/alice.git
-cd alice
-bash setup.sh
+curl -fsSL https://raw.githubusercontent.com/LlmKira/alice/main/runtime/install.sh | sh
 ```
 
-`setup.sh` checks dependencies, walks you through configuration interactively, and handles the first Telegram login. That's it.
+Requires: Go 1.22+ or Docker (for compilation), plus Node.js 22+, SQLite, and Docker (for runtime).
 
-**[Full deployment guide →](docs/deployment.md)** — manual setup, auxiliary services, Docker sandbox, systemd hardening, troubleshooting.
+After installation:
+
+```bash
+mkdir ~/alice && cd ~/alice
+alice init     # Create .env template
+vim .env       # Add Telegram API credentials and LLM API key
+alice doctor   # Verify environment
+alice run      # Start (foreground, Ctrl+C to stop)
+```
+
+### Multi-Instance
+
+Each working directory is an independent bot instance:
+
+```bash
+mkdir ~/bot1 && cd ~/bot1 && alice init && alice start
+mkdir ~/bot2 && cd ~/bot2 && alice init && alice start  # Different config
+```
+
+### alice CLI
+
+| Command | Description |
+|---------|-------------|
+| `alice init` | Initialize current directory (create .env template) |
+| `alice run` | Run in foreground (logs to stdout) |
+| `alice start` | Run in background (logs to `logs/YYYY-MM-DD.log`) |
+| `alice stop` | Stop background process |
+| `alice status` | Show status and log location |
+| `alice doctor` | Environment diagnostics |
 
 > **Note:** Do not run `pnpm run db:migrate` separately — Alice migrates automatically on first start.
 
@@ -232,6 +258,9 @@ cd simulation && uv sync && uv run python run_all.py
 
 ```
 runtime/                    # TypeScript — the living system
+├── cmd/alice/              # Go CLI (init, run, doctor)
+├── cmd/skills/             # Go skill binaries (weather, music, ...)
+├── internal/               # Go internal packages
 ├── src/engine/             # Three-thread loop (perceive/evolve/act)
 ├── src/pressure/           # P1-P6 force computation
 ├── src/voices/             # Voice competition + personality vectors
@@ -240,6 +269,8 @@ runtime/                    # TypeScript — the living system
 ├── src/mods/               # Diary, observer, clustering, ...
 ├── src/skills/             # App toolkit (weather, music, ...)
 ├── src/db/                 # SQLite + Drizzle ORM
+├── install.sh              # One-line installer
+├── Makefile                # Go build
 └── test/                   # vitest
 
 simulation/                 # Python — the proving ground
@@ -254,6 +285,7 @@ simulation/                 # Python — the proving ground
 | | Technology |
 |-|-----------|
 | Runtime | TypeScript, Node.js, tsx |
+| Skills CLI | Go (static binaries) |
 | Telegram | [@mtcute](https://github.com/mtcute/mtcute) (MTProto) |
 | Database | SQLite + [Drizzle ORM](https://orm.drizzle.team/) |
 | LLM | OpenAI-compatible API |
