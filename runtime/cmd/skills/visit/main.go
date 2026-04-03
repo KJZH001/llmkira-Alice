@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/LlmKira/alice/runtime/internal/engine"
+	"github.com/LlmKira/Alice/runtime/internal/engine"
 )
 
 func main() {

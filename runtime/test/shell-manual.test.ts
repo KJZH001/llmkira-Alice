@@ -19,15 +19,13 @@ describe("command catalog", () => {
   it("probes command visibility via container and builds the catalog", async () => {
     const { executeDockerCommand } = await import("../src/skills/backends/docker.js");
     const mockDocker = executeDockerCommand as ReturnType<typeof vi.fn>;
-    mockDocker.mockResolvedValue("CMD\tirc\nCMD\tctl\nCMD\tweather\nMAN\tirc\n");
+    mockDocker.mockResolvedValue("irc\nctl\nweather\n");
 
     const root = mkdtempSync(join(tmpdir(), "alice-catalog-"));
     const systemBinDir = join(root, "system-bin");
-    const manRoot = join(root, "man");
     const storePath = join(root, "store-weather");
 
     mkdirSync(systemBinDir, { recursive: true });
-    mkdirSync(join(manRoot, "man1"), { recursive: true });
     mkdirSync(storePath, { recursive: true });
 
     writeFileSync(join(systemBinDir, "irc"), "#!/usr/bin/env sh\n");
@@ -35,10 +33,6 @@ describe("command catalog", () => {
     chmodSync(join(systemBinDir, "irc"), 0o755);
     chmodSync(join(systemBinDir, "ctl"), 0o755);
     writeFileSync(join(systemBinDir, "irc.ts"), "ignored source");
-    writeFileSync(
-      join(manRoot, "man1", "irc.1"),
-      ".TH IRC 1\n.SH NAME\nirc \\- Telegram system chat client for Alice\n",
-    );
 
     writeFileSync(
       join(storePath, "manifest.yaml"),
@@ -86,11 +80,8 @@ describe("command catalog", () => {
     const catalog = await probeCommandCatalog({
       registry,
       systemBinDir,
-      manRoot,
       env: {
         PATH: `${systemBinDir}:${process.env.PATH ?? ""}`,
-        ALICE_MANPATH: manRoot,
-        MANPATH: manRoot,
         ALICE_SYSTEM_BIN_DIR: systemBinDir,
       },
     });
@@ -118,9 +109,7 @@ describe("generateShellManual", () => {
     const { executeDockerCommand } = await import("../src/skills/backends/docker.js");
     const mockDocker = executeDockerCommand as ReturnType<typeof vi.fn>;
     // 模拟容器探测返回系统命令
-    mockDocker.mockResolvedValue(
-      "CMD\tirc\nCMD\tself\nCMD\tengine\nCMD\task\nCMD\talice-pkg\nMAN\tirc\n",
-    );
+    mockDocker.mockResolvedValue("irc\nself\nengine\nask\nalice-pkg\n");
     const manual = await generateShellManual([]);
     expect(manual).toContain("## Command Catalog");
     expect(manual).toContain("This catalog is fetched through a live runtime command probe");
@@ -135,19 +124,13 @@ describe("container probe mode", () => {
   it("uses the docker runner handshake for catalog probe", async () => {
     const { executeDockerCommand } = await import("../src/skills/backends/docker.js");
     const mockDocker = executeDockerCommand as ReturnType<typeof vi.fn>;
-    mockDocker.mockResolvedValue("CMD\tirc\nMAN\tirc\n");
+    mockDocker.mockResolvedValue("irc\n");
 
     const root = mkdtempSync(join(tmpdir(), "alice-container-probe-"));
     const systemBinDir = join(root, "opt", "alice", "bin");
-    const manRoot = join(root, "opt", "alice", "share", "man");
     mkdirSync(systemBinDir, { recursive: true });
-    mkdirSync(join(manRoot, "man1"), { recursive: true });
     writeFileSync(join(systemBinDir, "irc"), "#!/usr/bin/env sh\n");
     chmodSync(join(systemBinDir, "irc"), 0o755);
-    writeFileSync(
-      join(manRoot, "man1", "irc.1"),
-      ".TH IRC 1\n.SH NAME\nirc \\- Telegram system chat client for Alice\n",
-    );
 
     const catalog = await probeCommandCatalog({
       registry: {
@@ -165,11 +148,7 @@ describe("container probe mode", () => {
         },
       },
       systemBinDir,
-      manRoot,
-      env: {
-        PATH: systemBinDir,
-        ALICE_MANPATH: manRoot,
-      },
+      env: { PATH: systemBinDir },
     });
 
     expect(mockDocker).toHaveBeenCalledWith(
@@ -179,7 +158,6 @@ describe("container probe mode", () => {
         isolation: "sandboxed",
         extraMounts: expect.arrayContaining([
           expect.objectContaining({ source: systemBinDir, target: ALICE_CONTAINER_PATHS.bin }),
-          expect.objectContaining({ source: manRoot, target: ALICE_CONTAINER_PATHS.man }),
         ]),
       }),
     );
@@ -193,19 +171,13 @@ describe("container probe mode", () => {
 
     const root = mkdtempSync(join(tmpdir(), "alice-probe-fallback-"));
     const systemBinDir = join(root, "system-bin");
-    const manRoot = join(root, "man");
     const storePath = join(root, "store-weather");
 
     mkdirSync(systemBinDir, { recursive: true });
-    mkdirSync(join(manRoot, "man1"), { recursive: true });
     mkdirSync(storePath, { recursive: true });
 
     writeFileSync(join(systemBinDir, "irc"), "#!/usr/bin/env sh\n");
     chmodSync(join(systemBinDir, "irc"), 0o755);
-    writeFileSync(
-      join(manRoot, "man1", "irc.1"),
-      ".TH IRC 1\n.SH NAME\nirc \\- Telegram system chat client for Alice\n",
-    );
 
     writeFileSync(join(storePath, "weather"), "#!/usr/bin/env sh\n");
     chmodSync(join(storePath, "weather"), 0o755);
@@ -243,7 +215,6 @@ describe("container probe mode", () => {
         },
       },
       systemBinDir,
-      manRoot,
     });
 
     expect(catalog.commands).toEqual(

@@ -51,6 +51,17 @@ export const BEAT_TYPES = [
 
 export type BeatType = (typeof BEAT_TYPES)[number];
 
+// -- ADR-241: 压力阈值过滤常量 -------------------------------------------
+
+/** ADR-241: 压力阈值 — 低于此值的线程不注入 prompt。 */
+// 依据：minor 线程（初始值 0.5）约 7 天后压力降至 0.15 以下。
+// major 线程（初始值 2.0）无活动约 30 天后才低于 0.15。
+const PRESSURE_THRESHOLD = 0.15;
+
+/** ADR-241: Stale 标记阈值 — 接近过滤阈值时显示 [stale] 标记。 */
+// 1.5× PRESSURE_THRESHOLD = 0.225，提前约 1-2 天警告。
+const STALE_THRESHOLD = PRESSURE_THRESHOLD * 1.5;
+
 // -- 辅助函数 -----------------------------------------------------------------
 
 function parseInvolves(raw: string | null): Involvement[] {
@@ -408,7 +419,12 @@ export const threadsMod = createMod<ThreadsState>("threads", {
         const parts = [`#${r.id} "${r.title}" [${r.status}] ${r.weight}`];
         if (r.pressure != null) {
           const p = Number(r.pressure);
-          parts.push(p > 1.0 ? "high urgency" : p > 0.5 ? "moderate" : "low");
+          // ADR-241: dormant 状态表示线程存在但不会注入到 prompt 中
+          const urgency =
+            p < PRESSURE_THRESHOLD ? "dormant" :
+            p > 1.0 ? "high urgency" :
+            p > 0.5 ? "moderate" : "low";
+          parts.push(urgency);
         }
         const involves = r.involves as
           | Array<{ displayName?: string; nodeId: string; role?: string }>
@@ -517,6 +533,8 @@ export const threadsMod = createMod<ThreadsState>("threads", {
           ctx.nowMs,
         ),
       }))
+      // ADR-241: 压力阈值过滤 — 自动排除长期无活动的线程
+      .filter((t) => t.pressure >= PRESSURE_THRESHOLD)
       .sort((a, b) => b.pressure - a.pressure);
 
     // 分离：涉及当前对话对象的线程优先展示
@@ -557,7 +575,16 @@ export const threadsMod = createMod<ThreadsState>("threads", {
         lastBeatMs != null
           ? ` — you last advanced ${humanDurationAgo((ctx.nowMs - lastBeatMs) / 1000)}`
           : "";
-      m.line(`[#${t.id}] "${t.title}"${sourceTag} (${t.weight}, ${urgencyLabel})${lastAdvanced}`);
+      // ADR-241: Stale 标记 — 接近过滤阈值时显示 [stale]
+      const isStale = t.pressure < STALE_THRESHOLD;
+      const staleTag = isStale ? " [stale]" : "";
+      // ADR-241: 计算无活动天数
+      const inactiveMs = ctx.nowMs - (lastBeatMs ?? t.createdAt);
+      const inactiveDays = Math.round(inactiveMs / (24 * 3600 * 1000));
+      const inactiveTag = inactiveDays > 0 ? ` — inactive ${inactiveDays}d` : "";
+      m.line(
+        `[#${t.id}] "${t.title}"${sourceTag} (${t.weight}, ${urgencyLabel})${staleTag}${lastAdvanced}${inactiveTag}`
+      );
       if (t.tensionFrame) m.kv("frame", t.tensionFrame);
       if (t.deadlineTick != null) {
         const deadlineMs =

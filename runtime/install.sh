@@ -2,9 +2,9 @@
 # alice-install — Alice 一键安装
 #
 # 用法:
-#   curl -fsSL https://raw.githubusercontent.com/LlmKira/alice/main/runtime/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/LlmKira/Alice/main/runtime/install.sh | sh
 #
-# 需要: Go 1.22+ 或 Docker（二选一）
+# 需要: Node.js 20+, npm, Go 1.22+ 或 Docker（Go/Docker 二选一用于编译 skill CLI）
 #
 # 安装位置:
 #   /usr/local/bin/alice          # CLI
@@ -20,7 +20,7 @@ set -e
 
 # ── 配置 ───────────────────────────────────────────────────────────
 
-REPO="LlmKira/alice"
+REPO="LlmKira/Alice"
 BRANCH="main"
 PREFIX="${ALICE_PREFIX:-/usr/local}"
 WORKDIR="${TMPDIR:-/tmp}/alice-build-$$"
@@ -45,7 +45,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── 检查依赖 ───────────────────────────────────────────────────────
+# ── 检查运行时依赖（前置） ────────────────────────────────────────
+
+info "检查运行时依赖..."
+
+if ! command -v node >/dev/null 2>&1; then
+    fail "Node.js 未安装（运行时必需）
+
+安装方法:
+  https://nodejs.org/
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
+fi
+
+NODE_MAJOR=$(node -e 'console.log(process.versions.node.split(".")[0])')
+if [ "$NODE_MAJOR" -lt 20 ]; then
+    fail "Node.js 版本过低 (v$(node -v))，需要 v20+"
+fi
+info "Node.js $(node -v) ✓"
+
+if ! command -v pnpm >/dev/null 2>&1; then
+    info "安装 pnpm..."
+    npm install -g pnpm || fail "pnpm 安装失败，请手动安装: npm install -g pnpm"
+fi
+info "pnpm $(pnpm --version) \u2713"
+
+# ── 检查编译依赖 ───────────────────────────────────────────────────
 
 info "检查编译依赖..."
 
@@ -92,7 +116,7 @@ if command -v git >/dev/null 2>&1; then
 else
     step "下载压缩包..."
     curl -fsSL "https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz" | tar -xzf - -C "$WORKDIR"
-    mv "$WORKDIR/alice-$BRANCH" "$WORKDIR/alice"
+    mv "$WORKDIR/Alice-$BRANCH" "$WORKDIR/alice"
 fi
 
 cd "$WORKDIR/alice/runtime"
@@ -157,63 +181,37 @@ info "安装运行时代码..."
 sudo mkdir -p "$PREFIX/lib/alice/runtime"
 
 # 复制必要的运行时文件
-for item in src package.json bun.lock tsconfig.json drizzle.config.ts skills; do
-    step "复制 $item"
-    sudo cp -r "$item" "$PREFIX/lib/alice/runtime/"
+for item in src package.json tsconfig.json drizzle.config.ts drizzle skills; do
+    if [ -e "$item" ]; then
+        step "复制 $item"
+        sudo cp -r "$item" "$PREFIX/lib/alice/runtime/"
+    fi
 done
+
+# 复制 pnpm workspace 文件（锁文件在仓库根目录）
+sudo cp "$WORKDIR/alice/pnpm-lock.yaml" "$PREFIX/lib/alice/"
+sudo cp "$WORKDIR/alice/pnpm-workspace.yaml" "$PREFIX/lib/alice/"
 
 # 安装依赖
 info "安装运行时依赖..."
-cd "$PREFIX/lib/alice/runtime"
-if command -v bun >/dev/null 2>&1; then
-    sudo bun install --frozen-lockfile 2>/dev/null || sudo bun install
-else
-    sudo npm install --omit=dev 2>/dev/null || sudo npm install
-fi
+cd "$PREFIX/lib/alice"
+sudo pnpm install --prod --frozen-lockfile 2>/dev/null || sudo pnpm install --prod
 
-# ── 构建 Docker 镜像 ─────────────────────────────────────────────────
+# ── 构建 Docker 镜像（可选） ──────────────────────────────────────────
 
-info "构建 Docker 镜像（skill 隔离执行环境）..."
 cd "$WORKDIR/alice/runtime"
 
-if ! docker image inspect alice-skill-runner:bookworm >/dev/null 2>&1; then
-    step "构建 alice-skill-runner:bookworm"
-    docker build -t alice-skill-runner:bookworm -f Dockerfile.skill-runner . 2>&1 | while read line; do step "$line"; done
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    info "构建 Docker 镜像（skill 隔离执行环境）..."
+    if ! docker image inspect alice-skill-runner:bookworm >/dev/null 2>&1; then
+        step "构建 alice-skill-runner:bookworm"
+        docker build -t alice-skill-runner:bookworm -f Dockerfile.skill-runner . 2>&1 | while read line; do step "$line"; done
+    else
+        step "镜像已存在，跳过构建"
+    fi
 else
-    step "镜像已存在，跳过构建"
-fi
-
-# ── 运行时依赖检查 ─────────────────────────────────────────────────
-
-echo ""
-warn "运行时依赖:"
-
-MISSING=""
-if ! command -v node >/dev/null 2>&1; then
-    MISSING="$MISSING node"
-    warn "  Node.js 未安装"
-fi
-
-if ! command -v docker >/dev/null 2>&1; then
-    MISSING="$MISSING docker"
-    warn "  Docker 未安装（skill 安全执行必需）"
-fi
-
-if ! command -v sqlite3 >/dev/null 2>&1; then
-    MISSING="$MISSING sqlite3"
-    warn "  SQLite 未安装"
-fi
-
-# ── 完成 ────────────────────────────────────────────────────────────
-
-echo ""
-if [ -n "$MISSING" ]; then
-    fail "缺少必需依赖:$MISSING
-
-安装方法:
-  Node.js: https://nodejs.org/
-  Docker: https://docs.docker.com/get-docker/
-  SQLite: sudo apt install sqlite3 (Debian) 或 sudo pacman -S sqlite (Arch)"
+    warn "Docker 未安装或未运行，跳过 skill-runner 镜像构建"
+    warn "如需 skill 沙箱隔离，请安装 Docker: https://docs.docker.com/get-docker/"
 fi
 
 info "✅ 安装完成!"

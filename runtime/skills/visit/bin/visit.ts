@@ -2,8 +2,8 @@
 /**
  * visit CLI — URL 内容提取 + LLM 摘要管线。
  *
- * 用法: npx tsx bin/visit.ts "https://example.com" ["focus text"]
- * 输出: JSON to stdout（VisitResult 形状）
+ * 用法: npx tsx bin/visit.ts "https://example.com" ["focus text"] [--json]
+ * 输出: 默认人类可读，--json 返回 JSON
  *
  * 管线：
  * 1. Engine API 获取 exaApiKey
@@ -12,9 +12,11 @@
  * 4. Engine API graph.write 存储结果
  *
  * @see docs/adr/202-engine-api.md
+ * @see docs/adr/235-cli-human-readable-output.md
  */
 
 import { engineGet, enginePost } from "../../_lib/engine-client.js";
+import { die, renderJson } from "../../../src/system/cli-bridge.ts";
 
 // ── Exa Contents API ──
 
@@ -56,27 +58,28 @@ async function exaExtract(
 
 // ── main ──
 
-const url = process.argv[2] ?? "";
+const rawArgs = process.argv.slice(2);
+const jsonMode = rawArgs.includes("--json");
+const args = rawArgs.filter((a) => a !== "--json");
+
+const url = args[0] ?? "";
 if (!url.trim() || !/^https?:\/\//i.test(url)) {
-  console.error("Usage: visit.ts <url> [focus]");
-  process.exit(1);
+  die("visit", "Usage: visit <url> [focus]");
 }
 
-const focus = process.argv[3]?.trim() || undefined;
+const focus = args[1]?.trim() || undefined;
 
 // 1. 获取 Exa API key
 const configResp = (await engineGet("/config/exaApiKey")) as { value: string } | null;
 const exaApiKey = configResp?.value;
 if (!exaApiKey) {
-  console.error("EXA_API_KEY not configured");
-  process.exit(1);
+  die("visit", "EXA_API_KEY not configured");
 }
 
 // 2. 提取页面内容
 const raw = await exaExtract([url], exaApiKey);
 if (raw.length === 0 || !raw[0].text) {
-  console.error("URL extraction returned empty");
-  process.exit(1);
+  die("visit", "URL extraction returned empty");
 }
 
 // 3. LLM 摘要
@@ -96,5 +99,11 @@ const result = {
 };
 await enginePost("/graph/self/last_visit_result", { value: result });
 
-// 5. 输出
-console.log(JSON.stringify(result));
+// 5. 输出（ADR-235: 默认人类可读）
+if (jsonMode) {
+  console.log(renderJson(result));
+} else {
+  console.log(`Summary of "${result.title}":`);
+  console.log(summary);
+  console.log(`URL: ${result.url}`);
+}

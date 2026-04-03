@@ -8,8 +8,8 @@
  * - 元数据（tick / target / voice / round / 时间）
  * - 完整 system prompt
  * - 完整 user prompt
- * - LLM 输出的脚本
- * - 脚本执行结果（thinks / actions / errors）
+ * - LLM 生成的脚本（rawScript）
+ * - TC 循环执行结果（afterward / tool calls / thinks / errors / command output）
  *
  * 用途：事后诊断 prompt 工程问题——看 LLM 看到了什么、产出了什么。
  *
@@ -18,6 +18,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Afterward } from "../llm/tools.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("prompt-log");
@@ -39,10 +40,15 @@ export interface PromptSnapshot {
   round: number;
   system: string;
   user: string;
-  /** LLM 返回的脚本（null = LLM 调用失败）。 */
+  /** LLM 生成的脚本（rawScript，null = LLM 调用失败）。 */
   script: string | null;
-  /** 脚本执行后的数据（可选，终端轮才有完整数据）。 */
+  /** TC 循环执行数据（LLM 调用成功时存在）。 */
   execution?: {
+    afterward: Afterward;
+    toolCallCount: number;
+    budgetExhausted: boolean;
+    /** 聚合的 `$ cmd\noutput` 块（完整命令+输出对）。 */
+    commandOutput: string;
     thinks: string[];
     queryLogs: Array<{ fn: string; result: string }>;
     errors: string[];
@@ -87,41 +93,50 @@ export function logPromptSnapshot(snapshot: PromptSnapshot): void {
     // User prompt
     parts.push("## User Prompt", "", "```", snapshot.user, "```", "");
 
-    // LLM output
+    // LLM script
     if (snapshot.script) {
-      parts.push("## LLM Script Output", "", "```sh", snapshot.script, "```", "");
+      parts.push("## LLM Script", "", "```sh", snapshot.script, "```", "");
     } else {
-      parts.push("## LLM Script Output", "", "**LLM 调用失败**", "");
+      parts.push("## LLM Script", "", "**LLM 调用失败**", "");
     }
 
-    // Sandbox results
+    // 执行结果
     if (snapshot.execution) {
-      const sb = snapshot.execution;
-      parts.push("## Script Execution Results", "");
+      const ex = snapshot.execution;
 
-      if (sb.thinks.length > 0) {
+      parts.push("## Execution", "");
+      parts.push(`- afterward: ${ex.afterward}`);
+      parts.push(`- tool calls: ${ex.toolCallCount}`);
+      if (ex.budgetExhausted) parts.push("- **budget exhausted**");
+      parts.push("");
+
+      if (ex.thinks.length > 0) {
         parts.push("### Thinks", "");
-        for (const t of sb.thinks) {
+        for (const t of ex.thinks) {
           parts.push(`- ${t}`);
         }
         parts.push("");
       }
 
-      if (sb.queryLogs.length > 0) {
+      if (ex.queryLogs.length > 0) {
         parts.push("### Query Logs", "");
-        for (const q of sb.queryLogs) {
+        for (const q of ex.queryLogs) {
           const preview = q.result.length > 200 ? `${q.result.slice(0, 200)}...` : q.result;
           parts.push(`- \`${q.fn}\`: ${preview}`);
         }
         parts.push("");
       }
 
-      if (sb.errors.length > 0) {
+      if (ex.errors.length > 0) {
         parts.push("### Errors", "");
-        for (const e of sb.errors) {
-          parts.push(`- ❌ ${e}`);
+        for (const e of ex.errors) {
+          parts.push(`- ${e}`);
         }
         parts.push("");
+      }
+
+      if (ex.commandOutput) {
+        parts.push("### Command Output", "", "```", ex.commandOutput, "```", "");
       }
     }
 

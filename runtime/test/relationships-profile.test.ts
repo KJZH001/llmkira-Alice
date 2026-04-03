@@ -153,10 +153,10 @@ describe("relationships.mod — tag_interest (ADR-208)", () => {
 
   it("display_name 被解析为 nodeId", () => {
     const ctx = makeCtx();
-    ctx.graph.addContact("contact:1", { display_name: "Leo" });
+    ctx.graph.addContact("contact:1", { display_name: "Rin" });
 
     const result = instructions.tag_interest.impl(ctx as unknown as ModContext, {
-      who: "Leo",
+      who: "Rin",
       interest: "reading",
     }) as { success: boolean; entityId: string };
 

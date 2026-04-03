@@ -15,6 +15,7 @@ import { chatIdToContactId, DUNBAR_TIER_THETA } from "../graph/constants.js";
 import type { DunbarTier } from "../graph/entities.js";
 import { findActiveConversation } from "../graph/queries.js";
 import type { WorldModel } from "../graph/world-model.js";
+import { ChatTarget } from "../prompt/types.js";
 import { elapsedS, LEGACY_TICK_INTERVAL_MS, readNodeMs } from "./clock.js";
 import { proactiveCooldownForTier } from "./goldilocks.js";
 import { getDefaultParams, type HawkesState, queryIntensity } from "./hawkes.js";
@@ -73,7 +74,7 @@ const INTRUSIVENESS_GROUP: Record<string, number> = {
  * @see docs/adr/113-online-social-recalibration.md §D1
  */
 export function getIntrusiveness(action: string, chatType?: string): number {
-  if (chatType === "group" || chatType === "supergroup") {
+  if (ChatTarget.isGroupChat(chatType)) {
     return INTRUSIVENESS_GROUP[action] ?? INTRUSIVENESS[action] ?? 0.5;
   }
   return INTRUSIVENESS[action] ?? 0.5;
@@ -429,7 +430,7 @@ export function computeSocialCost(
   }
   const tGap = elapsedS(nowMs, lastInteractionMs);
 
-  const isGroup = chatType === "group" || chatType === "supergroup";
+  const isGroup = ChatTarget.isGroupChat(chatType);
   const dist = cDist(aliceSentWindow, contactRecvWindow, tier, tGap, config, isGroup);
 
   // --- C_power: 权力差异 ---
@@ -575,9 +576,9 @@ export function computeSaturationCost(
   bypassGates: boolean,
 ): number {
   // ADR-206: 频道无饱和成本（信息流实体，不是社交对等体）
-  if (chatType === "channel") return 0;
+  if (ChatTarget.isChannelChat(chatType)) return 0;
 
-  const isGroup = chatType === "group" || chatType === "supergroup";
+  const isGroup = ChatTarget.isGroupChat(chatType);
 
   // ── σ_rate: per-target 频率饱和 ──
   const cap = bypassGates ? config.perTargetCapBypass : config.perTargetCap;

@@ -27,6 +27,7 @@ import {
 } from "../engine/act/timeline.js";
 import { buildCapabilityGuide, type TickPromptContext } from "../engine/tick/prompt-builder.js";
 import type { Blackboard, UnifiedTool } from "../engine/tick/types.js";
+import { ChatTarget } from "../prompt/types.js";
 import type {
   AblationCondition,
   EvalRunnerConfig,
@@ -69,7 +70,10 @@ export async function buildAblationPrompt(
     item.target && G.has(item.target)
       ? String(G.getDynamic(item.target, "chat_type") ?? "private")
       : "private";
-  const isGroup = chatType === "group" || chatType === "supergroup";
+  const isGroup = ChatTarget.isGroupChat(chatType);
+
+  // ADR-237: 简化场景判定（ablation 不需要 bot/channel 区分）
+  const chatTargetType = isGroup ? "group" : ("private_person" as const);
 
   // 工具手册（公平对比：所有条件都保留完整手册）
   const manual = await generateShellManual(dispatcher.mods);
@@ -95,7 +99,7 @@ export async function buildAblationPrompt(
     renderedUser = rendered.user;
 
     // Shell examples（保留，场景感知）
-    const scriptGuide = buildShellGuide({ isGroup });
+    const scriptGuide = buildShellGuide({ chatTargetType });
 
     const parts = [renderedSystem, manual, scriptGuide];
     if (capGuide) parts.push(capGuide);

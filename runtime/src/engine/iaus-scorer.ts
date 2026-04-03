@@ -31,18 +31,14 @@ import {
   type SocialCostConfig,
 } from "../pressure/social-cost.js";
 import { computeVoI, estimateDeltaP } from "../pressure/social-value.js";
+import { type ChannelClass, ChatTarget } from "../prompt/types.js";
 import type { PressureDims } from "../utils/math.js";
 import { std } from "../utils/math.js";
 import { rCaution, readSelfMood } from "../voices/focus.js";
 import { type PersonalityVector, VOICE_INDEX, type VoiceAction } from "../voices/personality.js";
 import { DEFAULT_VOICE_COOLDOWN, voiceFatigue } from "./deliberation.js";
 import { type Desire, findTopDesireForTarget } from "./desire.js";
-import {
-  type ChannelClass,
-  classifyChatType,
-  gateClosingConversation,
-  resolveIsBot,
-} from "./gates.js";
+import { classifyChatType, gateClosingConversation, resolveIsBot } from "./gates.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 常量
@@ -299,14 +295,10 @@ export interface IAUSConfig {
 // 辅助函数（从 v-maximizer.ts 迁移）
 // ═══════════════════════════════════════════════════════════════════════════
 
-function isGroup(chatType: string): boolean {
-  // ADR-206: channel 不是 group——频道是信息流实体，不参与社交成本计算
-  return chatType === "group" || chatType === "supergroup";
-}
-
 function silenceDamping(actSilences: number, chatType: string): number {
   const raw = 1 / (1 + actSilences);
-  return isGroup(chatType) ? Math.max(GROUP_SILENCE_DAMPING_FLOOR, raw) : raw;
+  // ADR-206: channel 不是 group——频道是信息流实体，不参与社交成本计算
+  return ChatTarget.isGroupChat(chatType) ? Math.max(GROUP_SILENCE_DAMPING_FLOOR, raw) : raw;
 }
 
 function extractSigma2(beliefs: BeliefStore, target: string): number {
@@ -750,7 +742,7 @@ export function scoreAllCandidates(
     // Pre-filter: consecutive_outgoing >= cap 且无义务 → 跳过（防垃圾轰炸）
     // 在 V-max 中此逻辑通过 C_sat σ_out 使 V ≤ 0 实现；IAUS 乘法不支持绝对否决，
     // 因此改为硬门控。义务信号（bypassGates）绕过此限制。
-    const isGroupChat = chatType === "group" || chatType === "supergroup";
+    const isGroupChat = ChatTarget.isGroupChat(chatType);
     const outgoingCap = isGroupChat ? satConfig.outgoingCapGroup : satConfig.outgoingCapPrivate;
     if (!bypass && consecutiveOutgoing >= outgoingCap) continue;
 

@@ -116,11 +116,20 @@ async function finalizeSlot(ctx: ActContext, slot: EngagementSlot): Promise<void
     // processResult: 一次性调用，传递 engagement metrics
     const mergedResult = session.toMergedResult();
     const closureResult = measureClosureDepth(graphBefore, ctx.G);
-    processResult(ctx, item, tick, mergedResult, session.errorCount, closureResult.maxDepth, {
-      subcycles: session.subcycle,
-      durationMs: session.elapsed,
-      outcome: session.outcome,
-    }, session.lastTcMeta);
+    processResult(
+      ctx,
+      item,
+      tick,
+      mergedResult,
+      session.errorCount,
+      closureResult.maxDepth,
+      {
+        subcycles: session.subcycle,
+        durationMs: session.elapsed,
+        outcome: session.outcome,
+      },
+      session.lastTcMeta,
+    );
     // ADR-173: 延迟记录——行动确认后写入 recentActions
     // ADR-215 Wave 2: 所有行动类型（包括 observe）都计入 rateCap，防止内部循环超频
     // 区分：真实 Telegram 行动（有 completedActions）vs 内部行动（silence/observe/llm_failed）

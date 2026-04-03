@@ -1,32 +1,36 @@
 /**
  * ADR-233: 原生 Tool Use 工具定义。
  *
- * 单 `run` 工具（执行 Alice CLI）+ `signal` 工具（afterward 语义）。
+ * 单 `bash` 工具（执行 POSIX sh 脚本）+ `signal` 工具（afterward 语义）。
  *
  * TC 循环下 Flow 信号的新定义：
  * - 旧架构下 `watching` = "等中间结果"（intra-episode，被 TC 消解）
  * - TC 下 `watching` = "我还在关注，想继续说/观察展开"（inter-episode 行为状态）
  *
  * @see docs/adr/233-native-toolcall-bt-hybrid.md
+ * @see nanoclaw (Bash tool), pi-mono (BashOperations)
  */
 import type OpenAI from "openai";
 
 /**
- * `run` 工具 — 执行 Alice shell 命令。
+ * `bash` 工具 — 执行 POSIX sh 脚本（在 Docker 容器中）。
  *
- * 单工具设计：Alice 的所有能力已是 CLI 命令，不需要多工具目录。
- * LLM 在训练数据中有大量 `run(command="...")` 模式，理解成本极低。
+ * 单工具设计：Alice 的所有能力通过 CLI 命令暴露（irc/self/engine/app），
+ * LLM 写纯 bash 脚本，容器中执行。
+ *
+ * 与 NanoClaw/pi-mono 对齐：工具命名 `bash` 准确反映技术本质。
  */
-export const TOOL_RUN: OpenAI.Chat.Completions.ChatCompletionTool = {
+export const TOOL_BASH: OpenAI.Chat.Completions.ChatCompletionTool = {
   type: "function" as const,
   function: {
-    name: "run",
+    name: "bash",
     description:
-      "Execute Alice shell commands. " +
-      "Write one command per line. " +
-      "Available commands: irc (Telegram), self (perception/memory), engine (system), app (weather, music, etc). " +
-      "Use '<command> --help' to discover usage. " +
-      "TIP: Use 'echo' for scratchpad reasoning, '#' for comments.",
+      "Execute bash commands in a sandboxed Docker container. " +
+      "Available commands: irc (Telegram), self (perception/memory), " +
+      "engine (system), app (weather, music, etc). " +
+      "TIP: Use '<command> --help' to discover usage. " +
+      "You can chain commands with pipes and redirects. " +
+      "Use 'echo' for scratchpad reasoning, '#' for comments.",
     parameters: {
       type: "object",
       properties: {
@@ -38,7 +42,7 @@ export const TOOL_RUN: OpenAI.Chat.Completions.ChatCompletionTool = {
             "Examples:\n" +
             "  'irc tail 5'\n" +
             "  'self feel curious\\nirc say \"hello\"'\n" +
-            "  'weather tokyo'",
+            "  'weather tokyo | grep -i sun'",
         },
       },
       required: ["command"],
@@ -82,7 +86,7 @@ export const TOOL_SIGNAL: OpenAI.Chat.Completions.ChatCompletionTool = {
 };
 
 /** ADR-233 工具列表 — 导出供 TC 循环使用。 */
-export const ADR233_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [TOOL_RUN, TOOL_SIGNAL];
+export const ADR233_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [TOOL_BASH, TOOL_SIGNAL];
 
 /** Signal 工具的 afterward 值 — 单一来源，其他模块 import 此类型。 */
 export type Afterward = "done" | "waiting_reply" | "watching" | "fed_up" | "cooling_down";
@@ -94,12 +98,12 @@ export function extractToolUseParams(
   toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
 ): { name: string; args: Record<string, unknown> } {
   try {
-    // @ts-expect-error OpenAI SDK 类型定义不一致，实际结构是 { id, type, function: { name, arguments } }
-    const fn = toolCall.function as { name: string; arguments: string };
+    // OpenAI SDK 实际返回 { id, type, function: { name, arguments: } }
+    const fn = toolCall.function;
     const args = JSON.parse(fn.arguments) as Record<string, unknown>;
     return { name: fn.name, args };
   } catch {
-    // @ts-expect-error 同上
-    return { name: (toolCall.function as { name: string }).name ?? "unknown", args: {} };
+    // JSON parse 失败时提供安全的默认值
+    return { name: (fn?.name as string) ?? "unknown", args: {} };
   }
 }

@@ -43,6 +43,7 @@
 
 import { findActiveConversation } from "../graph/queries.js";
 import type { WorldModel } from "../graph/world-model.js";
+import { ChatTarget } from "../prompt/types.js";
 import { readNodeMs } from "./clock.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -111,10 +112,9 @@ export function effectiveObligation(G: WorldModel, channelId: string, nowMs: num
 
   const ageS = Math.max(0, (nowMs - lastDirectedMs) / 1000);
   const chatType = attrs.chat_type ?? "private";
-  const halfLife =
-    chatType === "group" || chatType === "supergroup"
-      ? OBLIGATION_HALFLIFE_GROUP
-      : OBLIGATION_HALFLIFE_PRIVATE;
+  const halfLife = ChatTarget.isGroupChat(chatType)
+    ? OBLIGATION_HALFLIFE_GROUP
+    : OBLIGATION_HALFLIFE_PRIVATE;
 
   return decaySignal(directed, ageS, halfLife);
 }

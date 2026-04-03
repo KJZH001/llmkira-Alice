@@ -45,26 +45,26 @@ describe("applyPerturbation", () => {
       applyPerturbation(G, {
         type: "new_message",
         channelId: "channel:100",
-        contactId: "contact:42",
+        contactId: "contact:10042",
         displayName: "Bob",
         tick: 1,
         chatType: "private",
       });
 
-      expect(G.has("contact:42")).toBe(true);
-      expect(G.getContact("contact:42").display_name).toBe("Bob");
-      expect(G.getNeighbors("self", "acquaintance")).toContain("contact:42");
-      expect(G.getNeighbors("contact:42", "joined")).toContain("channel:100");
+      expect(G.has("contact:10042")).toBe(true);
+      expect(G.getContact("contact:10042").display_name).toBe("Bob");
+      expect(G.getNeighbors("self", "acquaintance")).toContain("contact:10042");
+      expect(G.getNeighbors("contact:10042", "joined")).toContain("channel:100");
     });
 
     it("已存在的节点不重复创建", () => {
       G.addChannel("channel:100", { chat_type: "group" });
-      G.addContact("contact:42", { display_name: "Bob" });
+      G.addContact("contact:10042", { display_name: "Bob" });
 
       applyPerturbation(G, {
         type: "new_message",
         channelId: "channel:100",
-        contactId: "contact:42",
+        contactId: "contact:10042",
         tick: 1,
       });
 
@@ -208,26 +208,26 @@ describe("applyPerturbation", () => {
     });
 
     it("更新联系人 last_active_ms 和 interaction_count", () => {
-      G.addContact("contact:1");
+      G.addContact("contact:100");
       applyPerturbation(G, {
         type: "new_message",
         channelId: "channel:100",
-        contactId: "contact:1",
+        contactId: "contact:100",
         tick: 10,
         nowMs: 1000010,
       });
 
-      expect(G.getContact("contact:1").last_active_ms).toBe(1000010);
-      expect(G.getContact("contact:1").interaction_count).toBe(1);
+      expect(G.getContact("contact:100").last_active_ms).toBe(1000010);
+      expect(G.getContact("contact:100").interaction_count).toBe(1);
 
       applyPerturbation(G, {
         type: "new_message",
         channelId: "channel:100",
-        contactId: "contact:1",
+        contactId: "contact:100",
         tick: 20,
         nowMs: 1000020,
       });
-      expect(G.getContact("contact:1").interaction_count).toBe(2);
+      expect(G.getContact("contact:100").interaction_count).toBe(2);
     });
 
     it("returning contact 检测（沉默超过半个 theta）", () => {
@@ -313,14 +313,14 @@ describe("applyPerturbation", () => {
 
   describe("user_status", () => {
     it("更新联系人 last_active_ms", () => {
-      G.addContact("contact:1", { last_active_ms: 0 });
+      G.addContact("contact:100", { last_active_ms: 0 });
       applyPerturbation(G, {
         type: "user_status",
-        contactId: "contact:1",
+        contactId: "contact:100",
         tick: 42,
         nowMs: 1000042,
       });
-      expect(G.getContact("contact:1").last_active_ms).toBe(1000042);
+      expect(G.getContact("contact:100").last_active_ms).toBe(1000042);
     });
 
     it("不存在的联系人不崩溃", () => {
@@ -329,8 +329,8 @@ describe("applyPerturbation", () => {
     });
 
     it("返回 0.1", () => {
-      G.addContact("contact:1");
-      const n = applyPerturbation(G, { type: "user_status", contactId: "contact:1", tick: 1 });
+      G.addContact("contact:100");
+      const n = applyPerturbation(G, { type: "user_status", contactId: "contact:100", tick: 1 });
       expect(n).toBe(0.1);
     });
   });
@@ -339,19 +339,19 @@ describe("applyPerturbation", () => {
 
   describe("contact_active", () => {
     it("更新联系人 last_active_ms", () => {
-      G.addContact("contact:1");
+      G.addContact("contact:100");
       applyPerturbation(G, {
         type: "contact_active",
-        contactId: "contact:1",
+        contactId: "contact:100",
         tick: 30,
         nowMs: 1000030,
       });
-      expect(G.getContact("contact:1").last_active_ms).toBe(1000030);
+      expect(G.getContact("contact:100").last_active_ms).toBe(1000030);
     });
 
     it("返回 0.2", () => {
-      G.addContact("contact:1");
-      const n = applyPerturbation(G, { type: "contact_active", contactId: "contact:1", tick: 1 });
+      G.addContact("contact:100");
+      const n = applyPerturbation(G, { type: "contact_active", contactId: "contact:100", tick: 1 });
       expect(n).toBe(0.2);
     });
   });
@@ -394,10 +394,10 @@ describe("applyPerturbation", () => {
       applyPerturbation(G, {
         type: "reaction",
         channelId: "channel:100",
-        contactId: "contact:1",
+        contactId: "contact:100",
         tick: 1,
       });
-      expect(G.getContact("contact:1").last_reaction_emoji).toBe("");
+      expect(G.getContact("contact:100").last_reaction_emoji).toBe("");
     });
 
     it("返回 0.3", () => {
@@ -435,11 +435,11 @@ describe("applyPerturbations", () => {
   it("返回平均 novelty", () => {
     const G = makeGraph();
     G.addChannel("channel:1");
-    G.addContact("contact:1");
+    G.addContact("contact:100");
 
     const events: GraphPerturbation[] = [
       { type: "new_message", channelId: "channel:1", tick: 1, novelty: 0.8 },
-      { type: "user_status", contactId: "contact:1", tick: 1 }, // 0.1
+      { type: "user_status", contactId: "contact:100", tick: 1 }, // 0.1
     ];
     const avg = applyPerturbations(G, events);
     expect(avg).toBeCloseTo((0.8 + 0.1) / 2, 5);
@@ -458,50 +458,50 @@ describe("ADR-206: channel phantom contact isolation", () => {
   });
 
   it("频道以自身身份发消息 → 不创建 contact 节点", () => {
-    // 频道 sender_id === chat_id（channel:-1001000000001 以自身身份发帖）
+    // 频道 sender_id === chat_id（channel:-1009900000001 以自身身份发帖）
     applyPerturbation(G, {
       type: "new_message",
-      channelId: "channel:-1001000000001",
-      contactId: "contact:-1001000000001",
+      channelId: "channel:-1009900000001",
+      contactId: "contact:-1001",
       chatType: "channel",
-      displayName: "Mika🍤",
+      displayName: "测试用户🦊",
       tick: 1,
     });
 
     // channel 节点应存在
-    expect(G.has("channel:-1001000000001")).toBe(true);
+    expect(G.has("channel:-1009900000001")).toBe(true);
     // phantom contact 不应被创建
-    expect(G.has("contact:-1001000000001")).toBe(false);
+    expect(G.has("contact:-1001")).toBe(false);
   });
 
   it("频道中真人管理员发消息 → 正常创建 contact 节点", () => {
     // 管理员的 sender_id !== chat_id
     applyPerturbation(G, {
       type: "new_message",
-      channelId: "channel:-1001000000001",
-      contactId: "contact:12345678",
+      channelId: "channel:-1009900000001",
+      contactId: "contact:1002345678",
       chatType: "channel",
       displayName: "Admin",
       tick: 1,
     });
 
     // 管理员 contact 应存在
-    expect(G.has("contact:12345678")).toBe(true);
-    expect(G.getContact("contact:12345678").display_name).toBe("Admin");
+    expect(G.has("contact:1002345678")).toBe(true);
+    expect(G.getContact("contact:1002345678").display_name).toBe("Admin");
   });
 
   it("非频道消息 → 正常创建 contact 节点", () => {
     applyPerturbation(G, {
       type: "new_message",
       channelId: "channel:100",
-      contactId: "contact:100",
+      contactId: "contact:10000",
       chatType: "private",
       displayName: "Bob",
       tick: 1,
     });
 
     // 私聊中 sender_id === chat_id 也应创建 contact
-    expect(G.has("contact:100")).toBe(true);
+    expect(G.has("contact:10000")).toBe(true);
   });
 });
 
@@ -512,27 +512,27 @@ describe("ADR-206: channel phantom contact isolation", () => {
 describe("cleanupPhantomContacts", () => {
   it("删除频道幽灵联系人", () => {
     const G = makeGraph();
-    G.addChannel("channel:-1001000000001", { chat_type: "channel" });
-    G.addContact("contact:-1001000000001", { tier: 50, display_name: "Mika🍤" });
-    G.addRelation("self", "acquaintance", "contact:-1001000000001");
+    G.addChannel("channel:-1009900000001", { chat_type: "channel" });
+    G.addContact("contact:-1001", { tier: 50, display_name: "测试用户🦊" });
+    G.addRelation("self", "acquaintance", "contact:-1001");
 
     const cleaned = cleanupPhantomContacts(G);
 
     expect(cleaned).toBe(1);
-    expect(G.has("contact:-1001000000001")).toBe(false);
+    expect(G.has("contact:-1001")).toBe(false);
     // channel 节点应保留
-    expect(G.has("channel:-1001000000001")).toBe(true);
+    expect(G.has("channel:-1009900000001")).toBe(true);
   });
 
   it("不删除私聊联系人", () => {
     const G = makeGraph();
     G.addChannel("channel:100", { chat_type: "private" });
-    G.addContact("contact:100", { tier: 50, display_name: "Bob" });
+    G.addContact("contact:10000", { tier: 50, display_name: "Bob" });
 
     const cleaned = cleanupPhantomContacts(G);
 
     expect(cleaned).toBe(0);
-    expect(G.has("contact:100")).toBe(true);
+    expect(G.has("contact:10000")).toBe(true);
   });
 
   it("不删除群聊联系人", () => {

@@ -187,12 +187,29 @@ export interface PressureDimensionSpec {
 }
 
 export const PRESSURE_SPECS: Record<string, PressureDimensionSpec> = {
-  P1: { kappaMin: 5.0, typicalScale: 200 },
-  P2: { kappaMin: 8.0, typicalScale: 50 },
-  P3: { kappaMin: 8.0, typicalScale: 8 },
+  // ADR-215: 上调 κ₁ 以匹配实际规模（968 contacts，原标定 ~15）
+  // 典型贡献：unread × w ≈ 5 × 20 = 100，κ=15 时 tanh(100/15)≈0.999 仍高
+  // 但配合 ln(1+unread) 在 effectiveUnread 中，P1 应保持在合理范围
+  P1: { kappaMin: 15.0, typicalScale: 200 },
+
+  // ADR-215: 上调 κ₂ 以匹配实际规模（192 facts）
+  // 典型贡献：192 × 0.5 × 0.5 ≈ 48（平均 importance=0.5，半遗忘）
+  P2: { kappaMin: 20.0, typicalScale: 50 },
+
+  // P3 有 Top-K 截断，与总规模解耦，κ 保持适中
+  P3: { kappaMin: 10.0, typicalScale: 8 },
+
+  // P4 对数增长，与规模次线性，κ 保持保守
   P4: { kappaMin: 5.0, typicalScale: 10 },
-  P5: { kappaMin: 3.0, typicalScale: 3 },
-  P6: { kappaMin: 5.0, typicalScale: 5.0 },
+
+  // ADR-215: 大幅上调 κ₅ 以配合 directed 对数缩放
+  // effectiveDirected = ln(1+min(raw, 5)) ≈ 1.8
+  // 典型贡献：72 channels × 1.8 × avg(w≈50) × chatW(1) ≈ 150
+  // κ=50 时 tanh(150/50)=0.76，保留动态范围
+  P5: { kappaMin: 50.0, typicalScale: 50 },
+
+  // P6 论文有界 [0, η]，κ 小但 η=0.6 确保有界
+  P6: { kappaMin: 0.5, typicalScale: 0.6 },
 };
 
 /** 从 PRESSURE_SPECS 派生的 kappaMin 六元组（默认 kappa 下界）。 */

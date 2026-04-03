@@ -10,42 +10,38 @@
 import { chatIdToContactId } from "../graph/constants.js";
 import { findConversationForChannel } from "../graph/queries.js";
 import type { WorldModel } from "../graph/world-model.js";
+import { type ChannelClass, ChatTarget } from "../prompt/types.js";
 import type { VoiceAction } from "../voices/personality.js";
 import type { ActionCandidate } from "./iaus-scorer.js";
 
 // -- 频道分类 ----------------------------------------------------------------
 
-/**
- * 频道四分法：私聊 vs 群组 vs 频道 vs 机器人。
- *
- * ADR-206: channel 独立于 group——频道是信息流（单向/受限互动），
- * 不是社交对等体。rate cap、社交成本、门控行为均不同。
- * @see ADR-113 D0: chat_type 作为一等参数
- * @see ADR-189: 三元 ChannelClass → ADR-206: 四元
- * @see docs/adr/206-channel-information-flow/206-channel-information-flow.md §3
- */
-export type ChannelClass = "private" | "group" | "channel" | "bot";
+// ChannelClass 类型从 prompt/types.ts 导入（ADR-237 统一）
+// @see ADR-237: ChatTargetType 五分法 → ChannelClass 四分法派生
 
 /**
  * 将 Telegram chat_type 归类为四分法的 ChannelClass。
  *
+ * 用于历史行动分类（只有 chatType + isBot，无 isOwnedChannel 信息）。
+ * 场景判定（有完整上下文）应使用 snapshot.ts 的 ChatTargetType + toChannelClass。
+ *
  * ADR-206: channel 独立分类，不再归入 group。
  * group/supergroup → "group"，channel → "channel"。
  * isBot 仅在非群聊/非频道时生效：private + isBot → "bot"。
+ *
+ * @see ADR-237: ChatTargetType 为场景判定唯一真相源
  * @see ADR-189 D1 → ADR-206 §3
  */
 export function classifyChatType(chatType: string | undefined, isBot?: boolean): ChannelClass {
-  if (chatType === "group" || chatType === "supergroup") {
-    return "group";
-  }
-  if (chatType === "channel") return "channel";
+  if (ChatTarget.isGroupChat(chatType)) return "group";
+  if (ChatTarget.isChannelChat(chatType)) return "channel";
   if (isBot === true) return "bot";
   return "private";
 }
 
 /** 判断 chat_type 是否为频道。 @see ADR-206 §3 */
 export function isChannel(chatType: string | undefined): boolean {
-  return chatType === "channel";
+  return ChatTarget.isChannelChat(chatType);
 }
 
 /**

@@ -23,6 +23,7 @@ import { handleGraphGet, handleGraphSet } from "./routes/graph.js";
 import { handleLlmSummarize, handleLlmSynthesize } from "./routes/llm.js";
 import { handleMetaCommands } from "./routes/meta.js";
 import { handleQuery } from "./routes/query.js";
+import { handleResolveName } from "./routes/resolve.js";
 import {
   handleSkillInfo,
   handleSkillInstall,
@@ -288,6 +289,16 @@ export function routeRequest(
     segments[1] === "commands"
   ) {
     return handleMetaCommands(res, deps);
+  }
+
+  // --- resolve (ADR-237: 名称解析) ---
+  if (
+    resource === "resolve" &&
+    method === "POST" &&
+    segments.length === 2 &&
+    segments[1] === "name"
+  ) {
+    return handleResolveName(req, res, deps);
   }
 
   res.writeHead(404, { "Content-Type": "application/json" });

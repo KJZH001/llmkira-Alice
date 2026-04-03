@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/6tail/lunar-go/calendar"
-	"github.com/LlmKira/alice/runtime/internal/engine"
-	"github.com/LlmKira/alice/runtime/internal/timeutil"
+	"github.com/LlmKira/Alice/runtime/internal/engine"
+	"github.com/LlmKira/Alice/runtime/internal/timeutil"
 )
 
 type CalendarResult struct {

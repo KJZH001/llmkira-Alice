@@ -71,6 +71,8 @@ function notConfigured(res: ServerResponse, action: string): void {
 }
 
 function serverError(res: ServerResponse, fallback: string, err: unknown): void {
+  // ADR-237: 记录完整错误堆栈便于排查
+  console.error(`[Engine API] ${fallback}:`, err instanceof Error ? err.stack : err);
   res.writeHead(500, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: err instanceof Error ? err.message : fallback }));
 }

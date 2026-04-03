@@ -277,7 +277,7 @@ export const diaryMod = createMod<DiaryState>("diary", {
   .instruction("diary", {
     params: z.object({
       content: z.string().trim().min(1).max(MAX_ENTRY_LENGTH).describe("日记内容（自由文本）"),
-      about: z.string().optional().describe("关联实体 @id（可选，如 @1000000003）"),
+      about: z.string().optional().describe("关联实体 @id（可选，如 @7785440246）"),
     }),
     description: "写一条私人日记",
     affordance: {

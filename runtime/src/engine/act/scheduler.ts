@@ -19,6 +19,7 @@
  * @see docs/adr/142-action-space-architecture/README.md
  */
 import { ALICE_SELF, ensureChannelId, extractNumericId } from "../../graph/constants.js";
+import { ChatTarget } from "../../prompt/types.js";
 import { createLogger } from "../../utils/logger.js";
 import { type ActionQueue, type ActionQueueItem, pressureScore } from "../action-queue.js";
 import { captureGraphState } from "../closure-depth.js";
@@ -131,7 +132,7 @@ export async function initSlot(ctx: ActContext, item: ActionQueueItem): Promise<
     item.target && ctx.G.has(item.target)
       ? (ctx.G.getChannel(item.target).chat_type ?? "private")
       : "private";
-  const maxSubcycles = chatType === "group" || chatType === "supergroup" ? 2 : undefined;
+  const maxSubcycles = ChatTarget.isGroupChat(chatType) ? 2 : undefined;
 
   return {
     item,

@@ -12,8 +12,8 @@ import { getDb } from "../../db/connection.js";
 import { defineAction } from "../action-builder.js";
 import { getStickerSetContract, listStickersContract } from "../action-contracts.js";
 import type { TelegramActionDef } from "../action-types.js";
-import { getInstalledStickers, getStickerSet, sendSticker } from "../actions.js";
-import { getAvailableKeywords, resolveByEmoji, resolveLabel } from "../apps/sticker-palette.js";
+import { getInstalledStickers, getStickerSet, sendSticker, sendText } from "../actions.js";
+import { getAvailableKeywords, resolveByEmoji, resolveLabel, KEYWORD_TO_EMOJI } from "../apps/sticker-palette.js";
 import { cacheOutgoingMsg } from "../events.js";
 
 export const stickerActions: TelegramActionDef[] = [
@@ -76,8 +76,25 @@ export const stickerActions: TelegramActionDef[] = [
         tier = 0;
       }
 
-      // Tier 3: 结构化失败 + 可操作指引
+      // Tier 3: emoji 兜底 → 结构化失败
       if (!fileId) {
+        const emoji = KEYWORD_TO_EMOJI[args.sticker.toLowerCase()];
+        if (emoji) {
+          // emoji 兜底：发送纯文本 emoji
+          const msgId = await sendText(ctx.client, rawId, emoji, { replyToMsgId: args.replyTo });
+          if (msgId != null) {
+            cacheOutgoingMsg(graphId, msgId);
+          }
+          ctx.dispatcher.dispatch("DECLARE_ACTION", { target: graphId });
+          ctx.log.info("send_sticker: emoji fallback", {
+            chatId: args.chatId,
+            input: args.sticker,
+            fallback: emoji,
+          });
+          return { success: true, obligationsConsumed: 1 };
+        }
+
+        // 完全失败：结构化错误信息
         const available = getAvailableKeywords(db);
         const errorMsg = `No sticker matches "${args.sticker}". Valid: ${available}`;
         ctx.log.warn("send_sticker: all tiers failed", { input: args.sticker });

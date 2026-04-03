@@ -8,6 +8,7 @@
  * 4. stderr 附加：命令失败时附加 stderr
  *
  * @see docs/adr/213-tool-calling-act-thread.md
+ * @see ~/.claude/refs/pi-mono/packages/coding-agent/src/core/tools/truncate.ts — truncateTail 参考
  */
 
 import type { ScriptExecutionResult } from "./script-execution.js";

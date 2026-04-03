@@ -13,6 +13,7 @@
 
 import { PROPAGATION_WEIGHT } from "../graph/constants.js";
 import type { WorldModel } from "../graph/world-model.js";
+import { ChatTarget } from "../prompt/types.js";
 import { decayFactor } from "../utils/math.js";
 import { elapsedS, readNodeMs } from "./clock.js";
 
@@ -57,11 +58,11 @@ function resolveSusceptibility(G: WorldModel, eid: string, map: Record<string, n
 
   if (nodeType === "channel") {
     const chatType = G.getChannel(eid).chat_type;
-    if (chatType === "group" || chatType === "supergroup") {
+    if (ChatTarget.isGroupChat(chatType)) {
       return map.group_channel ?? map.channel ?? 1.0;
     }
     // ADR-206: Telegram channel 类型用 broadcast_channel 易感性
-    if (chatType === "channel") {
+    if (ChatTarget.isChannelChat(chatType)) {
       return map.broadcast_channel ?? map.channel ?? 1.0;
     }
     return map.channel ?? 1.0;

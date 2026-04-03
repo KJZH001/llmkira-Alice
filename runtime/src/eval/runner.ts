@@ -21,7 +21,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { generateText } from "ai";
 import { type Config, loadConfig } from "../config.js";
-import { executeShellScript } from "../core/shell-executor.js";
 import { extractRuntimeConfig } from "../engine/act/runtime-config.js";
 import { collectAllTools } from "../engine/tick/affordance-filter.js";
 import { createBlackboard } from "../engine/tick/blackboard.js";
@@ -124,16 +123,25 @@ function buildEvalTickDeps(
   diagnostics: EvalDiagnostics,
 ): TickDeps {
   return {
-    callLLM: async (system, user) => {
+    callLLM: async (system, user, _tick, _target, _voice, _contextVars) => {
       const result = await evalCallLLM(system, user, temperature, timeout);
       if (!result) return null;
-      return { script: result.script, afterward: "done" as const };
+      return {
+        afterward: "done" as const,
+        toolCallCount: 1,
+        budgetExhausted: false,
+        rawScript: result.script,
+        commandOutput: `$ ${result.script}\n(eval)`,
+        logs: [result.script],
+        errors: [],
+        instructionErrors: [],
+        duration: 0,
+        thinks: [],
+        queryLogs: [],
+        completedActions: [],
+        silenceReason: null,
+      };
     },
-
-    executeScript: (script, opts) =>
-      executeShellScript(script, {
-        contextVars: opts.contextVars,
-      }),
 
     // 消融路由
     buildPrompt:
@@ -211,6 +219,7 @@ function mergeTickResults(r1: TickResult, r2: TickResult): TickResult {
       ...new Set([...r1.preparedCategories, ...r2.preparedCategories]),
     ] as ToolCategory[],
     duration: r1.duration + r2.duration,
+    episodeRounds: r1.episodeRounds + r2.episodeRounds,
   };
 }
 

@@ -43,17 +43,17 @@ describe("buildSocialPanorama", () => {
 
   it("tier ≤ 50 的联系人出现在全景中", () => {
     const G = makeGraph();
-    G.addContact("contact:42", { tier: 15, display_name: "Leo" });
+    G.addContact("contact:42", { tier: 15, display_name: "Rin" });
     G.addRelation("self", "acquaintance", "contact:42");
 
     const lines = buildSocialPanorama(G, {}, {}, NOW);
     expect(lines.length).toBeGreaterThan(0);
-    expect(lines[0]).toContain("Leo");
+    expect(lines[0]).toContain("Rin");
   });
 
   it("兴趣标签从 contactProfiles 注入", () => {
     const G = makeGraph();
-    G.addContact("contact:42", { tier: 15, display_name: "Leo" });
+    G.addContact("contact:42", { tier: 15, display_name: "Rin" });
     G.addRelation("self", "acquaintance", "contact:42");
 
     const profiles: Record<string, ContactProfile> = {
@@ -78,7 +78,7 @@ describe("buildSocialPanorama", () => {
 
   it("最近分享过 → 显示 shared recently", () => {
     const G = makeGraph();
-    G.addContact("contact:42", { tier: 15, display_name: "Leo" });
+    G.addContact("contact:42", { tier: 15, display_name: "Rin" });
     G.addRelation("self", "acquaintance", "contact:42");
     // 模拟私聊 channel 的 last_shared_ms
     G.addChannel("channel:42");
@@ -90,7 +90,7 @@ describe("buildSocialPanorama", () => {
 
   it("分享超过 1 小时 → 不显示 shared recently", () => {
     const G = makeGraph();
-    G.addContact("contact:42", { tier: 15, display_name: "Leo" });
+    G.addContact("contact:42", { tier: 15, display_name: "Rin" });
     G.addRelation("self", "acquaintance", "contact:42");
     G.addChannel("channel:42");
     G.setDynamic("channel:42", "last_shared_ms", NOW - 2 * 3_600_000); // 2 小时前
@@ -112,7 +112,7 @@ describe("buildSocialPanorama", () => {
 
   it("ADR-208 W2: 有特质的联系人括号内显示 top-1 特质", () => {
     const G = makeGraph();
-    G.addContact("contact:42", { tier: 15, display_name: "Leo" });
+    G.addContact("contact:42", { tier: 15, display_name: "Rin" });
     G.addRelation("self", "acquaintance", "contact:42");
 
     const profiles: Record<string, ContactProfile> = {
@@ -139,11 +139,11 @@ describe("buildSocialPanorama", () => {
 
   it("ADR-208 W2: 无特质 → 括号内只有 tier 标签", () => {
     const G = makeGraph();
-    G.addContact("contact:42", { tier: 15, display_name: "Leo" });
+    G.addContact("contact:42", { tier: 15, display_name: "Rin" });
     G.addRelation("self", "acquaintance", "contact:42");
 
     const lines = buildSocialPanorama(G, {}, {}, NOW);
-    expect(lines[0]).toMatch(/Leo \([^,)]+\)/); // 括号内无逗号
+    expect(lines[0]).toMatch(/Rin \([^,)]+\)/); // 括号内无逗号
   });
 
   it("有兴趣标签优先，同标签状态下按 tier 升序", () => {
@@ -178,37 +178,37 @@ describe("buildSocialPanorama", () => {
 
 describe("buildShellGuide — channel mode", () => {
   it("频道 target 包含 Channel Instincts", () => {
-    const guide = buildShellGuide({ isGroup: false, isChannel: true });
+    const guide = buildShellGuide({ chatTargetType: "channel_other" });
     expect(guide).toContain("Channel Instincts");
     expect(guide).toContain("irc forward");
   });
 
   it("频道 target 包含 gold examples（forward 示例）", () => {
-    const guide = buildShellGuide({ isGroup: false, isChannel: true });
+    const guide = buildShellGuide({ chatTargetType: "channel_other" });
     expect(guide).toContain("```sh");
     expect(guide).toContain("forward");
   });
 
   it("频道 target 不包含 DM/Group instincts", () => {
-    const guide = buildShellGuide({ isGroup: false, isChannel: true });
+    const guide = buildShellGuide({ chatTargetType: "channel_other" });
     expect(guide).not.toContain("DM Instincts");
     expect(guide).not.toContain("Group Chat Instincts");
   });
 
   it("非频道的私聊仍然走 DM 路径", () => {
-    const guide = buildShellGuide({ isGroup: false });
+    const guide = buildShellGuide({ chatTargetType: "private_person" });
     expect(guide).toContain("DM Instincts");
     expect(guide).not.toContain("Channel Instincts");
   });
 
   it("hasBots 时注入的是收手示例，不是继续和 bot 对聊", () => {
-    const guide = buildShellGuide({ isGroup: true, hasBots: true });
+    const guide = buildShellGuide({ chatTargetType: "group", hasBots: true });
     expect(guide).toContain("afterward=cooling_down");
     expect(guide).not.toContain("weaving it into conversation");
   });
 
   it("群聊 guide 包含 cooling_down 与物理退群自保提示", () => {
-    const guide = buildShellGuide({ isGroup: true });
+    const guide = buildShellGuide({ chatTargetType: "group" });
     expect(guide).toContain("afterward=cooling_down");
     expect(guide).toContain("irc leave");
   });

@@ -56,12 +56,13 @@ import type {
   FeedItemSlot,
   GroupSlot,
   JargonSlot,
+  OwnedChannelSlot,
   PresenceSlot,
   RecapSegment,
-  Scene,
   ThreadSlot,
   UserPromptSnapshot,
 } from "./types.js";
+import { ChatTarget } from "./types.js";
 
 const log = createLogger("snapshot");
 
@@ -82,6 +83,8 @@ export interface SnapshotInput {
     contextVars: Readonly<Record<string, unknown>>;
   };
   nowMs: number;
+  /** 用户时区偏移（小时），如 UTC+8 → 8 */
+  timezoneOffset: number;
   chatType: string;
   isGroup: boolean;
   isChannel: boolean;
@@ -397,6 +400,39 @@ function buildGroupPanorama(G: WorldModel): GroupSlot[] {
   return results;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Alice 的频道（ADR-237：策展人转发目标）
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PANORAMA_MAX_OWNED_CHANNELS = 3;
+
+function buildOwnedChannels(G: WorldModel): OwnedChannelSlot[] {
+  const results: OwnedChannelSlot[] = [];
+
+  for (const nodeId of G.getEntitiesByType("channel")) {
+    const attrs = G.getChannel(nodeId);
+    if (attrs.chat_type !== "channel") continue;
+
+    const role = String(attrs.alice_role ?? "");
+    if (role !== "owner" && role !== "admin") continue;
+
+    const displayName = attrs.display_name;
+    if (!displayName || String(displayName).trim() === "") continue;
+
+    const numericId = extractNumericId(nodeId);
+    if (numericId == null) continue;
+
+    results.push({
+      ref: { id: numericId, displayName: String(displayName), chatType: "channel" },
+      role: role as "owner" | "admin",
+    });
+
+    if (results.length >= PANORAMA_MAX_OWNED_CHANNELS) break;
+  }
+
+  return results;
+}
+
 // ══════════════════��════════════════════════════════════════════════════════
 // 对话状态（防复读）
 // ═══════════════════════════════════════════════════════════════════════════
@@ -466,6 +502,7 @@ function buildTimelineSlot(
   nowMs: number,
   peripheralConfig?: PeripheralVisionConfig | null,
   forwardRegistry?: ForwardRegistry,
+  timezoneOffset?: number,
 ): { lines: string[] } {
   const sinceMs = nowMs - TEN_MINUTES_MS;
 
@@ -479,7 +516,7 @@ function buildTimelineSlot(
   const timeline = buildTimeline(sources, target, sinceMs, nowMs);
   if (timeline.length === 0) return { lines: [] };
 
-  const rendered = renderTimeline(timeline, nowMs);
+  const rendered = renderTimeline(timeline, nowMs, timezoneOffset);
   // 固定窗口——超过上限时 clip-top（保留最新）
   if (rendered.length > MAX_TIMELINE_LINES) {
     return { lines: rendered.slice(-MAX_TIMELINE_LINES) };
@@ -555,7 +592,10 @@ function buildSituationSignals(
     const ch = G.getChannel(chId);
     if (ch.chat_type === "private" || ch.chat_type === "channel") continue;
     if ((ch.unread ?? 0) > 5) {
-      signals.push(`${safeDisplayName(G, chId)} is lively`);
+      const name = safeDisplayName(G, chId);
+      const numericId = extractNumericId(chId);
+      const idPart = numericId != null ? ` @${numericId}` : "";
+      signals.push(`${name}${idPart} is lively`);
     }
     if (signals.length >= 5) break;
   }
@@ -582,8 +622,12 @@ function buildSituationSignals(
       name = safeDisplayName(G, chId);
     }
 
+    // 添加数字 ID，让 LLM 能正确调用 irc 命令
+    const numericId = extractNumericId(chId);
+    const idPart = numericId != null ? ` @${numericId}` : "";
+
     const label = ch.chat_type === "private" ? "sent you a DM" : "is waiting for your reply";
-    signals.push(`${name} ${label}`);
+    signals.push(`${name}${idPart} ${label}`);
     if (signals.length >= 7) break;
   }
 
@@ -1082,12 +1126,55 @@ export function buildUserPromptSnapshot(input: SnapshotInput): UserPromptSnapsho
     episodeRound = 0,
     board,
     nowMs,
-    isGroup,
-    isChannel,
+    isGroup: inputIsGroup,
+    isChannel: inputIsChannel,
   } = input;
 
-  // ── 场景推断 ──
-  const scene: Scene = isChannel ? "channel" : isGroup ? "group" : "private";
+  // ── ADR-237: 场景判定（封闭状态空间）──
+  // 使用 ChatTarget 类封装判定逻辑，派生属性通过 getter 访问
+  const chatTarget = (() => {
+    // 频道场景
+    if (inputIsChannel && item.target) {
+      const channelId = ensureChannelId(item.target);
+      if (channelId && G.has(channelId)) {
+        const attrs = G.getChannel(channelId);
+        const role = String(attrs.alice_role ?? "");
+        return ChatTarget.from("channel", false, role);
+      }
+      return ChatTarget.from("channel", false, undefined);
+    }
+
+    // 群聊场景
+    if (inputIsGroup) {
+      return ChatTarget.from("group", false, undefined);
+    }
+
+    // 私聊场景：判断是人还是 Bot
+    let isBot = false;
+    if (item.target) {
+      const contactId = ensureContactId(item.target);
+      if (contactId && G.has(contactId) && G.getContact(contactId).is_bot === true) {
+        isBot = true;
+      } else {
+        // 从 channel ID 反推 contact ID
+        const numId = extractNumericId(item.target);
+        if (numId != null) {
+          const altContactId = ensureContactId(String(Math.abs(numId)));
+          if (altContactId && G.has(altContactId) && G.getContact(altContactId).is_bot === true) {
+            isBot = true;
+          }
+        }
+      }
+    }
+    return ChatTarget.from("private", isBot, undefined);
+  })();
+
+  // 从 ChatTarget 派生的布尔属性（替代 input 的 isGroup/isChannel）
+  const isGroup = chatTarget.isGroup;
+  const isChannel = chatTarget.isChannel;
+
+  // 导出 type 给 snapshot（渲染器仍需要）
+  const chatTargetType = chatTarget.type;
 
   // ── 目标 EntityRef ──
   const target = item.target ? (buildTargetRef(G, item.target) ?? undefined) : undefined;
@@ -1115,6 +1202,7 @@ export function buildUserPromptSnapshot(input: SnapshotInput): UserPromptSnapsho
     nowMs,
     peripheralConfig,
     fwdRegistry,
+    input.timezoneOffset,
   );
 
   // ─��� 线程 ──
@@ -1123,6 +1211,8 @@ export function buildUserPromptSnapshot(input: SnapshotInput): UserPromptSnapsho
   // ── 频道社交全景 ──
   const contacts = isChannel ? buildContactPanorama(G, input.contactProfiles) : [];
   const groups = isChannel ? buildGroupPanorama(G) : [];
+  // ADR-237: Alice 的频道（作为转发目标或发帖场景）
+  const ownedChannels = isChannel ? buildOwnedChannels(G) : [];
 
   // ── 对话状态（非频道）──
   const presence = isChannel ? undefined : buildPresence(messages, nowMs);
@@ -1137,7 +1227,7 @@ export function buildUserPromptSnapshot(input: SnapshotInput): UserPromptSnapsho
 
   // ── 关系描述（私聊）──
   const relationshipDesc =
-    scene === "private" && item.target ? buildRelationshipDesc(G, item.target) : undefined;
+    chatTarget.isPrivate && item.target ? buildRelationshipDesc(G, item.target) : undefined;
 
   // ── 行动反馈（observations 中的跨聊天内容由 timeline source 处理）──
   const feedback: UserPromptSnapshot["feedback"] = [];
@@ -1147,7 +1237,7 @@ export function buildUserPromptSnapshot(input: SnapshotInput): UserPromptSnapsho
 
   // ── 层② 联系人画像（仅私聊）──
   const contactProfile =
-    scene === "private" && item.target
+    chatTarget.isPrivate && item.target
       ? buildContactProfile(item.target, input.contactProfiles)
       : undefined;
 
@@ -1172,7 +1262,7 @@ export function buildUserPromptSnapshot(input: SnapshotInput): UserPromptSnapsho
 
   // ── 层④ 社交接收度（ADR-156）──
   const socialReception =
-    scene === "group" && item.target
+    chatTarget.isGroup && item.target
       ? readSocialReception(G, ensureChannelId(item.target) ?? item.target) || undefined
       : undefined;
 
@@ -1189,13 +1279,15 @@ export function buildUserPromptSnapshot(input: SnapshotInput): UserPromptSnapsho
   const feedItems: FeedItemSlot[] = input.feedItems ?? [];
 
   return {
-    scene,
+    chatTargetType,
     nowMs,
+    timezoneOffset: input.timezoneOffset,
     moodLabel,
     target,
     groupMeta,
     contacts,
     groups,
+    ownedChannels,
     timeline: { lines: timeline.lines },
     presence,
     threads,

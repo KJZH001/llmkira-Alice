@@ -3,7 +3,7 @@
  *
  * 构造固定图，手算期望值，确保 TS 实现与 Python 公式一致。
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   DUNBAR_TIER_THETA,
   DUNBAR_TIER_WEIGHT,
@@ -29,7 +29,7 @@ import { p2InformationPressure } from "../src/pressure/p2-information.js";
 import { p3RelationshipCooling } from "../src/pressure/p3-relationship.js";
 import { p4ThreadDivergence } from "../src/pressure/p4-thread.js";
 import { p5ResponseObligation } from "../src/pressure/p5-response.js";
-import { p6Curiosity } from "../src/pressure/p6-curiosity.js";
+import { p6Curiosity, resetNoveltyHistory } from "../src/pressure/p6-curiosity.js";
 import { propagatePressures } from "../src/pressure/propagation.js";
 import { logSigmoid } from "../src/utils/math.js";
 
@@ -532,21 +532,21 @@ describe("P3 群组存在子维度（ADR-104）", () => {
     const G = new WorldModel();
     G.addAgent("self");
     // 频道节点
-    G.addChannel("channel:-1001000000001", {
+    G.addChannel("channel:-1009900000001", {
       chat_type: "channel",
       tier_contact: 150,
     });
     // 幽灵联系人（与频道数字 ID 相同）
-    G.addContact("contact:-1001000000001", {
+    G.addContact("contact:-1009900000001", {
       tier: 50,
       last_active_ms: tickMs(50),
-      display_name: "Mika🍤",
+      display_name: "Rem�",
     });
-    G.addRelation("self", "acquaintance", "contact:-1001000000001");
+    G.addRelation("self", "acquaintance", "contact:-1009900000001");
 
     const { contributions } = p3RelationshipCooling(G, 200, tickMs(200));
     // 幽灵联系人不参与社交压力
-    expect(contributions["contact:-1001000000001"]).toBeUndefined();
+    expect(contributions["contact:-1009900000001"]).toBeUndefined();
   });
 
   it("真人联系人不受频道隔离影响", () => {
@@ -626,8 +626,13 @@ describe("P5 回应义务", () => {
     // "channel:alice": directed=2, tier=5, w=5.0, chat_type=private, chatW=2.0,
     // last_directed_ms=tickMs(98), ageS=(tickMs(100)-tickMs(98))/1000=120
     // ADR-157: 指数核 2^(-ageS/halfLife), halfLife=3600 (private)
+    // ADR-215: effectiveDirected = ln(1+min(raw, 5)), directed=2 → ln(3) ≈ 1.0986
     const decay = 2 ** (-120 / 3600);
-    expect(contributions["channel:alice"]).toBeCloseTo(2 * DUNBAR_TIER_WEIGHT[5] * 2.0 * decay, 10);
+    const effectiveDirected = Math.log1p(2); // ln(3) ≈ 1.0986
+    expect(contributions["channel:alice"]).toBeCloseTo(
+      effectiveDirected * DUNBAR_TIER_WEIGHT[5] * 2.0 * decay,
+      10,
+    );
 
     // "channel:group": directed=0 → 跳过
     expect(contributions["channel:group"]).toBeUndefined();
@@ -695,8 +700,10 @@ describe("P5 conversation turn awareness (M4)", () => {
     const w = DUNBAR_TIER_WEIGHT[50];
     const chatW = 1.0; // group
     // ADR-157: 指数核, ageS=60, halfLife=3600 (group — ADR-186 统一为与私聊一致)
+    // ADR-215: effectiveDirected = ln(1+1) = ln(2) ≈ 0.693
     const decay = 2 ** (-60.0 / 3600.0);
-    expect(contributions.ch1).toBeCloseTo(1 * w * chatW * decay, 10);
+    const effectiveDirected = Math.log1p(1); // ln(2) ≈ 0.693
+    expect(contributions.ch1).toBeCloseTo(effectiveDirected * w * chatW * decay, 10);
   });
 
   it("other_turn conversation → turnBoost=1.0", () => {
@@ -736,6 +743,8 @@ describe("P5 conversation turn awareness (M4)", () => {
 });
 
 describe("P6 好奇心（ADR-112 Surprise-driven Curiosity）", () => {
+  beforeEach(() => resetNoveltyHistory());
+
   it("无 contact 时返回 ambient curiosity（D2 冷启动）", () => {
     const G = new WorldModel();
     G.addAgent("self", { created_ms: Date.now() });
@@ -829,8 +838,11 @@ describe("P6 好奇心（ADR-112 Surprise-driven Curiosity）", () => {
     }
     const { total } = p6Curiosity(G, now, 0.6);
     // 150 contacts + 7 天 → familiarity ≈ 1.0 → ambient ≈ 0
-    // surprise 应主导
-    expect(total).toBeGreaterThan(0); // 不为零（surprise 驱动）
+    // 论文公式：P6 = max(0, η - mean_novelty)
+    // 150 个联系人 surprise 非零 → novelty 可能 > η → P6 可能为 0
+    // P6 ∈ [0, η] 是论文保证的有界性
+    expect(total).toBeGreaterThanOrEqual(0);
+    expect(total).toBeLessThanOrEqual(0.6);
   });
 
   it("沉默偏差驱动 surprise（tier-derived 期望）", () => {

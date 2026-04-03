@@ -5,19 +5,19 @@
  * 所有变更操作通过 Engine API 在引擎进程内执行。
  *
  * @see docs/adr/201-ai-native-os.md
+ * @see docs/adr/235-cli-human-readable-output.md
  */
 
 import { defineCommand, runMain } from "citty";
 import { engineGet, enginePost } from "../_lib/engine-client.ts";
+import { die, extractJsonFlag, formatOutput, renderJson } from "../../src/system/cli-bridge.ts";
 
-function die(msg: string): never {
-  process.stderr.write(`alice-pkg: ${msg}\n`);
-  process.exit(1);
-}
-
-async function requireResult<T>(promise: Promise<unknown | null>, context: string): Promise<T> {
+async function requireResult<T>(
+  promise: Promise<unknown | null>,
+  context: string,
+): Promise<T> {
   const result = await promise;
-  if (result == null) die(`Engine API unavailable (${context})`);
+  if (result == null) die("alice-pkg", `Engine API unavailable (${context})`);
   return result as T;
 }
 
@@ -59,15 +59,16 @@ const install = defineCommand({
   args: {
     name: { type: "positional", description: "Skill name", required: true },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
+    const { json } = extractJsonFlag(rawArgs);
     const name = (args.name as string).trim();
-    if (!name) die("skill name required");
+    if (!name) die("alice-pkg", "skill name required");
     const result = await requireResult<{ ok?: boolean; error?: string }>(
       enginePost("/skills/install", { name }),
       "install",
     );
-    if (result.error) die(`install: ${result.error}`);
-    console.log(`Installed ${name}.`);
+    if (result.error) die("alice-pkg", `install: ${result.error}`);
+    console.log(formatOutput(json, { ok: true, name }, `Installed ${name}.`));
   },
 });
 
@@ -76,15 +77,16 @@ const remove = defineCommand({
   args: {
     name: { type: "positional", description: "Skill name", required: true },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
+    const { json } = extractJsonFlag(rawArgs);
     const name = (args.name as string).trim();
-    if (!name) die("skill name required");
+    if (!name) die("alice-pkg", "skill name required");
     const result = await requireResult<{ ok?: boolean; error?: string }>(
       enginePost("/skills/remove", { name }),
       "remove",
     );
-    if (result.error) die(`remove: ${result.error}`);
-    console.log(`Removed ${name}.`);
+    if (result.error) die("alice-pkg", `remove: ${result.error}`);
+    console.log(formatOutput(json, { ok: true, name }, `Removed ${name}.`));
   },
 });
 
@@ -112,17 +114,41 @@ const info = defineCommand({
   args: {
     name: { type: "positional", description: "Skill name", required: true },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
+    const { json } = extractJsonFlag(rawArgs);
     const name = (args.name as string).trim();
-    if (!name) die("skill name required");
+    if (!name) die("alice-pkg", "skill name required");
     const result = await requireResult<{
       name: string;
       manifest: Record<string, unknown> | null;
       installed: Record<string, unknown> | null;
       error?: string;
     }>(engineGet(`/skills/info/${encodeURIComponent(name)}`), "info");
-    if (result.error) die(`info: ${result.error}`);
-    console.log(JSON.stringify(result, null, 2));
+    if (result.error) die("alice-pkg", `info: ${result.error}`);
+    // ADR-235: 默认人类可读，--json 保留原始格式
+    if (json) {
+      console.log(renderJson(result));
+    } else {
+      // 渲染为 key-value 格式
+      const lines: string[] = [`Skill: ${result.name}`];
+      if (result.manifest) {
+        lines.push("Manifest:");
+        for (const [k, v] of Object.entries(result.manifest)) {
+          if (v == null) continue;
+          const text = typeof v === "object" ? JSON.stringify(v) : String(v);
+          lines.push(`  ${k}: ${text}`);
+        }
+      }
+      if (result.installed) {
+        lines.push("Installed:");
+        for (const [k, v] of Object.entries(result.installed)) {
+          if (v == null) continue;
+          const text = typeof v === "object" ? JSON.stringify(v) : String(v);
+          lines.push(`  ${k}: ${text}`);
+        }
+      }
+      console.log(lines.join("\n"));
+    }
   },
 });
 
@@ -131,15 +157,16 @@ const upgrade = defineCommand({
   args: {
     name: { type: "positional", description: "Skill name", required: true },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
+    const { json } = extractJsonFlag(rawArgs);
     const name = (args.name as string).trim();
-    if (!name) die("skill name required");
+    if (!name) die("alice-pkg", "skill name required");
     const result = await requireResult<{ ok?: boolean; error?: string }>(
       enginePost("/skills/upgrade", { name }),
       "upgrade",
     );
-    if (result.error) die(`upgrade: ${result.error}`);
-    console.log(`Upgraded ${name}.`);
+    if (result.error) die("alice-pkg", `upgrade: ${result.error}`);
+    console.log(formatOutput(json, { ok: true, name }, `Upgraded ${name}.`));
   },
 });
 
@@ -148,15 +175,16 @@ const rollback = defineCommand({
   args: {
     name: { type: "positional", description: "Skill name", required: true },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
+    const { json } = extractJsonFlag(rawArgs);
     const name = (args.name as string).trim();
-    if (!name) die("skill name required");
+    if (!name) die("alice-pkg", "skill name required");
     const result = await requireResult<{ ok?: boolean; error?: string }>(
       enginePost("/skills/rollback", { name }),
       "rollback",
     );
-    if (result.error) die(`rollback: ${result.error}`);
-    console.log(`Rolled back ${name}.`);
+    if (result.error) die("alice-pkg", `rollback: ${result.error}`);
+    console.log(formatOutput(json, { ok: true, name }, `Rolled back ${name}.`));
   },
 });
 
@@ -165,14 +193,15 @@ const publish = defineCommand({
   args: {
     dir: { type: "positional", description: "Skill directory (default: .)" },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
+    const { json } = extractJsonFlag(rawArgs);
     const dir = (args.dir as string | undefined)?.trim() || ".";
     const result = await requireResult<{ ok?: boolean; hash?: string; error?: string }>(
       enginePost("/skills/publish", { dir }),
       "publish",
     );
-    if (result.error) die(`publish: ${result.error}`);
-    console.log(`Published (hash: ${result.hash}).`);
+    if (result.error) die("alice-pkg", `publish: ${result.error}`);
+    console.log(formatOutput(json, { ok: true, hash: result.hash }, `Published (hash: ${result.hash}).`));
   },
 });
 

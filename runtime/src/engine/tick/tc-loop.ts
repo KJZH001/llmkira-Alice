@@ -26,7 +26,7 @@ const log = createLogger("tick/tc-loop");
 export const TC_MAX_TOOL_CALLS = 8;
 
 // 工具名常量
-const RUN_TOOL_NAME = "run";
+const BASH_TOOL_NAME = "bash";
 const SIGNAL_TOOL_NAME = "signal";
 
 /**
@@ -123,7 +123,7 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
         const { name, args } = extractToolUseParams(toolCall);
         log.debug("Tool call", { name, toolCallCount });
 
-        if (name === RUN_TOOL_NAME) {
+        if (name === BASH_TOOL_NAME) {
           const command = String(args.command ?? "");
           if (!command) {
             messages.push({

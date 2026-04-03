@@ -41,15 +41,48 @@ export function parseCliValue(raw: string): unknown {
 
 export function parseKeyValueArgs(args: string[]): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  for (const arg of args) {
-    const eq = arg.indexOf("=");
-    if (eq <= 0) {
-      throw new Error(`expected key=value, got "${arg}"`);
+  let i = 0;
+
+  while (i < args.length) {
+    const arg = args[i];
+
+    // 格式 1: --key value（LLM 更自然的写法）
+    if (arg.startsWith("--")) {
+      const key = arg.slice(2);
+      // 下一个参数是值（如果存在且不是另一个 flag）
+      if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+        body[key] = parseCliValue(args[i + 1]);
+        i += 2;
+        continue;
+      } else {
+        // --flag 无值 → true
+        body[key] = true;
+        i++;
+        continue;
+      }
     }
-    const key = arg.slice(0, eq);
-    const value = arg.slice(eq + 1);
-    body[key] = parseCliValue(value);
+
+    // 格式 2: key=value（紧凑写法）
+    const eq = arg.indexOf("=");
+    if (eq > 0) {
+      const key = arg.slice(0, eq);
+      const value = arg.slice(eq + 1);
+      body[key] = parseCliValue(value);
+      i++;
+      continue;
+    }
+
+    // 格式 3: 单独的 key（无值）→ 下一个参数是值
+    // e.g. `count 20` → { count: 20 }
+    if (i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].includes("=")) {
+      body[arg] = parseCliValue(args[i + 1]);
+      i += 2;
+      continue;
+    }
+
+    throw new Error(`expected key=value or --key value, got "${arg}"`);
   }
+
   return body;
 }
 
@@ -142,8 +175,7 @@ export function renderKeyValue(pairs: Array<[string, unknown]>): string {
   return pairs
     .filter(([, v]) => v != null && v !== "")
     .map(([k, v]) => {
-      const text =
-        typeof v === "object" ? JSON.stringify(v) : String(v);
+      const text = typeof v === "object" ? JSON.stringify(v) : String(v);
       return `${k}: ${text}`;
     })
     .join("\n");
@@ -191,11 +223,12 @@ export function renderHuman(result: unknown): string {
     if (result.length === 0) return "(empty)";
     return result
       .map((item, i) => {
-        const text = typeof item === "string"
-          ? item
-          : typeof item === "object" && item !== null
-            ? summarizeObject(item as Record<string, unknown>)
-            : String(item);
+        const text =
+          typeof item === "string"
+            ? item
+            : typeof item === "object" && item !== null
+              ? summarizeObject(item as Record<string, unknown>)
+              : String(item);
         return `${i + 1}. ${text}`;
       })
       .join("\n");
@@ -210,4 +243,25 @@ export function renderHuman(result: unknown): string {
 /** JSON 模式输出（保留调试能力）。 */
 export function renderJson(result: unknown): string {
   return JSON.stringify(result, null, 2);
+}
+
+/**
+ * 格式化输出内容（ADR-239 简化版）。
+ * 返回人类可读文本。JSON 模式由 makeRunner 处理。
+ */
+export function formatOutput(humanText: string): string {
+  return humanText;
+}
+
+/**
+ * 统一错误退出函数（ADR-235）。
+ * 输出 `✗ <msg>` 到 stderr，设置 exit code，然后退出。
+ * @param cliName CLI 名称（如 "irc"、"alice-pkg"），用于错误前缀
+ * @param msg 错误消息
+ */
+export function die(cliName: string, msg: string): never {
+  process.stderr.write(`✗ ${cliName}: ${msg}\n`);
+  process.exitCode = 1;
+  // eslint-disable-next-line unicorn/no-process-exit
+  process.exit(1);
 }

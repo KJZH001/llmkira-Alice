@@ -17,6 +17,7 @@ import { ALICE_SELF } from "../graph/constants.js";
 import type { ChatType, ConversationState, TurnState } from "../graph/entities.js";
 import { findActiveConversation, findClosingConversation } from "../graph/queries.js";
 import type { WorldModel } from "../graph/world-model.js";
+import { ChatTarget } from "../prompt/types.js";
 import type { GraphPerturbation } from "../telegram/mapper.js";
 
 // -- 常量 -------------------------------------------------------------------
@@ -269,7 +270,7 @@ export function updateConversation(G: WorldModel, convId: string, event: GraphPe
       G.updateConversation(convId, { turn_state: "other_turn" });
     } else {
       const chatType = getChannelChatType(G, attrs.channel);
-      const isGroupChat = chatType === "group" || chatType === "supergroup";
+      const isGroupChat = ChatTarget.isGroupChat(chatType);
       const turnState = isGroupChat && !event.isDirected ? "open" : "alice_turn";
       G.updateConversation(convId, { turn_state: turnState });
     }
@@ -391,10 +392,9 @@ export function tickConversations(G: WorldModel, _tick: number, nowMs: number = 
       const pacePerS = msgCount / activePeriodS;
       // F6: chat-type 感知超时——群聊 15 分钟，私聊 45 分钟
       const chatType = getChannelChatType(G, attrs.channel);
-      const baseTimeout =
-        chatType === "group" || chatType === "supergroup"
-          ? CLOSING_TIMEOUT_GROUP_S
-          : CLOSING_TIMEOUT_PRIVATE_S;
+      const baseTimeout = ChatTarget.isGroupChat(chatType)
+        ? CLOSING_TIMEOUT_GROUP_S
+        : CLOSING_TIMEOUT_PRIVATE_S;
       const nClosingS = Math.max(baseTimeout, pacePerS > 0 ? Math.ceil(3 / pacePerS) : 3600);
       if (idleS >= nClosingS) {
         // ADR-90 W3: 进入 closing 时清理 turn_state，斩断 isConversationContinuation 信号

@@ -15,6 +15,7 @@
 
 import { resolveContactAndChannel } from "../graph/constants.js";
 import type { WorldModel } from "../graph/world-model.js";
+import { ChatTarget } from "../prompt/types.js";
 import type { ContributionItem } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -49,7 +50,7 @@ export function buildAudienceContext(
 
   return {
     targetChat,
-    chatType: chatType === "group" || chatType === "supergroup" ? chatType : "private",
+    chatType: ChatTarget.isGroupChat(chatType) ? (chatType as "group" | "supergroup") : "private",
     targetContact: contactId,
     targetTier: tier,
   };

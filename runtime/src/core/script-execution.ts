@@ -17,7 +17,6 @@ export interface ScriptExecutionResult {
   duration: number;
   thinks: string[];
   queryLogs: Array<{ fn: string; result: string }>;
-  contextVars?: Record<string, unknown>;
   /** 已完成的动作（shell 脚本输出的 __ALICE_ACTION__ 行）。格式: "sent:chatId=X:msgId=Y" 等。 */
   completedActions: string[];
   /** LLM 主动选择沉默的原因（null = 非沉默）。 */

@@ -55,6 +55,7 @@ import {
   OBLIGATION_THRESHOLDS,
   SILENCE_COOLDOWN_THRESHOLD,
 } from "../pressure/signal-decay.js";
+import { ChatTarget } from "../prompt/types.js";
 import { maybeAutoUpgrade } from "../skills/auto-upgrade.js";
 import type { EventBuffer } from "../telegram/events.js";
 import { createLogger } from "../utils/logger.js";
@@ -771,7 +772,7 @@ function computeTickPlan(
       if (!G.has(target)) return 1.0;
       const chAttrs = G.getChannel(target);
       const chatType = chAttrs.chat_type ?? "private";
-      const isGroupChat = chatType === "group" || chatType === "supergroup";
+      const isGroupChat = ChatTarget.isGroupChat(chatType);
 
       // 私聊：contact Hawkes + Phase 2 在线校准 + 昼夜调制
       if (!isGroupChat) {

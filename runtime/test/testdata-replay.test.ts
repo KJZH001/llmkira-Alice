@@ -2,9 +2,9 @@
  * 真实数据回放集成测试 — 用 Telegram Desktop 导出数据验证压力管线行为。
  *
  * 数据集：
- * - private_chat_1: 1,123 条，202 天，1:1 私聊
- * - smallgroup_1: 13,562 条，42 天，34 人小群
- * - supergroup_1: 372,800 条，192 天，3036 人大群（采样回放）
+ * - private_sonya: 1,123 条，202 天，1:1 私聊
+ * - smallgroup_poetry: 13,562 条，42 天，34 人小群
+ * - supergroup_miaomiao: 372,800 条，192 天，3036 人大群（采样回放）
  *
  * testdata 不提交到 git，缺失时测试自动 skip。
  *
@@ -26,15 +26,15 @@ import {
 
 // 项目根目录（runtime/ 的上一级）
 const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
-const DATA_PATH = resolve(PROJECT_ROOT, "simulation/testdata/private_chat_1/result.json");
+const DATA_PATH = resolve(PROJECT_ROOT, "simulation/testdata/private_sonya/result.json");
 const HAS_DATA = existsSync(DATA_PATH);
 
-const GROUP_DATA_PATH = resolve(PROJECT_ROOT, "simulation/testdata/smallgroup_1/result.json");
+const GROUP_DATA_PATH = resolve(PROJECT_ROOT, "simulation/testdata/smallgroup_poetry/result.json");
 const HAS_GROUP_DATA = existsSync(GROUP_DATA_PATH);
 
 const SUPERGROUP_DATA_PATH = resolve(
   PROJECT_ROOT,
-  "simulation/testdata/supergroup_1/result.json",
+  "simulation/testdata/supergroup_miaomiao/result.json",
 );
 const HAS_SUPERGROUP_DATA = existsSync(SUPERGROUP_DATA_PATH);
 
@@ -162,7 +162,7 @@ function replayEvents(parsed: ParsedChat, sampleInterval: number = 50): Pressure
 /** 启发式识别 Alice 的 senderId。 */
 function findAliceId(parsed: ParsedChat): string | null {
   for (const [id, name] of parsed.participants) {
-    if (id.includes("1000000001") || name.includes("Alice") || name.includes("Lilith")) {
+    if (id.includes("5275155445") || name.includes("莉莉丝") || name.includes("Lilith")) {
       return id;
     }
   }
@@ -170,10 +170,10 @@ function findAliceId(parsed: ParsedChat): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// 测试 — 私聊 (private_chat_1)
+// 测试 — 私聊 (private_sonya)
 // ---------------------------------------------------------------------------
 
-describe("testdata replay — private_chat_1", () => {
+describe("testdata replay — private_sonya", () => {
   it.skipIf(!HAS_DATA)("解析不崩溃", () => {
     const parsed = parseTelegramExport(DATA_PATH);
     expect(parsed.chatName).toBeTruthy();
@@ -308,11 +308,11 @@ describe("testdata replay — private_chat_1", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 测试 — 小群 (smallgroup_1)
+// 测试 — 小群 (smallgroup_poetry)
 // ADR-78: 群聊自然性验证 — 验证群聊场景下的压力管线行为
 // ---------------------------------------------------------------------------
 
-describe("testdata replay — smallgroup_1", () => {
+describe("testdata replay — smallgroup_poetry", () => {
   it.skipIf(!HAS_GROUP_DATA)("解析不崩溃", () => {
     const parsed = parseTelegramExport(GROUP_DATA_PATH);
     expect(parsed.chatName).toBeTruthy();
@@ -397,11 +397,11 @@ describe("testdata replay — smallgroup_1", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 测试 — 大群 (supergroup_1)
+// 测试 — 大群 (supergroup_miaomiao)
 // ADR-78: 高流速群聊场景 — 372,800 条消息，采样回放
 // ---------------------------------------------------------------------------
 
-describe("testdata replay — supergroup_1 (sampled)", () => {
+describe("testdata replay — supergroup_miaomiao (sampled)", () => {
   it.skipIf(!HAS_SUPERGROUP_DATA)("解析不崩溃", () => {
     const parsed = parseTelegramExport(SUPERGROUP_DATA_PATH);
     expect(parsed.chatName).toBeTruthy();

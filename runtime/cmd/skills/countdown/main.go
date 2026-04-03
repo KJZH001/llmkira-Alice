@@ -12,8 +12,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/LlmKira/alice/runtime/internal/engine"
-	"github.com/LlmKira/alice/runtime/internal/timeutil"
+	"github.com/LlmKira/Alice/runtime/internal/engine"
+	"github.com/LlmKira/Alice/runtime/internal/timeutil"
 )
 
 type CountdownResult struct {

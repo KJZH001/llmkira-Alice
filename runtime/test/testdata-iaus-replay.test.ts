@@ -44,11 +44,11 @@ import { PersonalityVector } from "../src/voices/personality.js";
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
-const PRIVATE_SONYA_PATH = resolve(PROJECT_ROOT, "simulation/testdata/private_chat_1/result.json");
-const SMALLGROUP_PATH = resolve(PROJECT_ROOT, "simulation/testdata/smallgroup_1/result.json");
+const PRIVATE_SONYA_PATH = resolve(PROJECT_ROOT, "simulation/testdata/private_sonya/result.json");
+const SMALLGROUP_PATH = resolve(PROJECT_ROOT, "simulation/testdata/smallgroup_poetry/result.json");
 const SUPERGROUP_PATH = resolve(
   PROJECT_ROOT,
-  "simulation/testdata/supergroup_1/result.json",
+  "simulation/testdata/supergroup_miaomiao/result.json",
 );
 
 const HAS_PRIVATE = existsSync(PRIVATE_SONYA_PATH);
@@ -80,7 +80,7 @@ interface IAUSSnapshot {
 /** 启发式识别 Alice 的 senderId。 */
 function findAliceId(parsed: ParsedChat): string | null {
   for (const [id, name] of parsed.participants) {
-    if (id.includes("1000000001") || name.includes("Alice") || name.includes("Lilith")) {
+    if (id.includes("5275155445") || name.includes("莉莉丝") || name.includes("Lilith")) {
       return id;
     }
   }
@@ -272,7 +272,7 @@ function replayWithIAUS(parsed: ParsedChat, sampleInterval: number): IAUSSnapsho
 // 1. 私聊 IAUS 行为不变量
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("IAUS replay — private_chat_1", () => {
+describe("IAUS replay — private_sonya", () => {
   it.skipIf(!HAS_PRIVATE)("directed 消息区间触发 bypass gates", () => {
     const parsed = parseTelegramExport(PRIVATE_SONYA_PATH);
     const snapshots = replayWithIAUS(parsed, 50);
@@ -358,10 +358,10 @@ describe("IAUS replay — private_chat_1", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 2. Consideration 曲线抽检（private_chat_1）
+// 2. Consideration 曲线抽检（private_sonya）
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("IAUS replay — Consideration 曲线抽检 (private_chat_1)", () => {
+describe("IAUS replay — Consideration 曲线抽检 (private_sonya)", () => {
   it.skipIf(!HAS_PRIVATE)("U_obligation 在 directed 区间上升", () => {
     const parsed = parseTelegramExport(PRIVATE_SONYA_PATH);
     const snapshots = replayWithIAUS(parsed, 50);
@@ -471,7 +471,7 @@ describe("IAUS replay — Consideration 曲线抽检 (private_chat_1)", () => {
 // 3. 小群 IAUS 行为不变量
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("IAUS replay — smallgroup_1", () => {
+describe("IAUS replay — smallgroup_poetry", () => {
   it.skipIf(!HAS_GROUP)("bypass 触发率 < 50%（Alice 不常被 @）", () => {
     const parsed = parseTelegramExport(SMALLGROUP_PATH);
     const snapshots = replayWithIAUS(parsed, 200);
@@ -530,7 +530,7 @@ describe("IAUS replay — smallgroup_1", () => {
 // 4. 大群压力测试（采样回放）
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("IAUS replay — supergroup_1 (sampled)", () => {
+describe("IAUS replay — supergroup_miaomiao (sampled)", () => {
   it.skipIf(!HAS_SUPERGROUP)(
     "372K 消息下 IAUS 数值健壮（无 NaN/Infinity）",
     { timeout: 120_000 },

@@ -36,6 +36,7 @@ function makeTickResult(overrides: Partial<EvalTickResult> = {}): EvalTickResult
     stepsUsed: 1,
     preparedCategories: [],
     duration: 100,
+    episodeRounds: 0,
     ...overrides,
   };
 }

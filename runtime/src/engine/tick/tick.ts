@@ -170,13 +170,37 @@ export async function tick(
     }
 
     // ── ADR-169: 脚本错误 → observations（LLM 自纠）──
+    // ADR-237 增强：将技术错误转换为自然语言描述
     if (execResult.errors.length > 0) {
-      const errLines = execResult.errors.map((e) => `- ${e}`).join("\n");
-      let obs = `(Script errors — review and adjust:\n${errLines})`;
-      if (execResult.completedActions.length > 0) {
-        const doneLines = execResult.completedActions.map((a) => `- ✓ ${a}`).join("\n");
-        obs += `\n(Already completed — do NOT repeat:\n${doneLines})`;
+      // 将技术错误转换为 IRC 风格的自然描述
+      const naturalErrors: string[] = [];
+
+      for (const e of execResult.errors) {
+        if (e.includes("Engine API returned 500")) {
+          // Telegram API 临时故障 → 自然语言
+          naturalErrors.push("消息发不出去了，Telegram 那边好像有点问题");
+        } else if (e.includes("Engine API returned 404")) {
+          naturalErrors.push("找不到这个目标");
+        } else if (e.includes("invalid target")) {
+          naturalErrors.push("不知道那是谁");
+        } else if (e.includes("unexpected extra argument") || e.includes("expected key=value")) {
+          naturalErrors.push("命令好像写错了");
+        } else if (e.includes("contact not found")) {
+          naturalErrors.push("通讯录里没有这个人");
+        } else {
+          // 其他错误保留原始信息但简化格式
+          naturalErrors.push(e);
+        }
       }
+
+      let obs = `(刚才的命令出了点问题:\n${naturalErrors.map((e) => `- ${e}`).join("\n")})`;
+
+      // 已完成的操作
+      if (execResult.completedActions.length > 0) {
+        const doneLines = execResult.completedActions.map((a) => `- ${a}`).join("\n");
+        obs += `\n(这些已经做完了，不要再重复:\n${doneLines})`;
+      }
+
       board.observations.push(obs);
     }
 

@@ -243,9 +243,10 @@ function buildDockerExecConfig(opts: DockerExecOptions): string[] {
 }
 
 function getDockerSessionSpec(opts: DockerExecOptions): DockerSessionSpec {
+  // enginePort 不納入 signature：它在 docker exec 時動態注入（-e ALICE_ENGINE_URL），
+  // 不影響容器身份。若納入，每次重啓（port 0 隨機分配）都會産生新容器且舊容器永不清理。
   const signaturePayload = JSON.stringify({
     image: opts.image,
-    enginePort: opts.enginePort ?? null,
     network: opts.network,
     memory: opts.memory,
     isolation: opts.isolation ?? "container",

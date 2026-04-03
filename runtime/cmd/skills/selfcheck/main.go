@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/LlmKira/alice/runtime/internal/engine"
+	"github.com/LlmKira/Alice/runtime/internal/engine"
 )
 
 type SelfcheckResult struct {

@@ -278,7 +278,7 @@ async function main() {
     mode: initialMode,
     focusTarget: undefined,
     modeEnteredMs: Date.now(),
-    adaptiveKappa: new AdaptiveKappa(config.kappa, config.kappaAdaptAlpha),
+    adaptiveKappa: new AdaptiveKappa(config.kappa),
     channelRateEma: new Map(),
     // ADR-191: spike 信号数据源（perceiveTick 产物）
     lastChannelCounts: new Map(),
@@ -393,9 +393,9 @@ async function main() {
   // D5: 初始化 provider fallback 链（ADR-123 §D5）
   initProviders(config);
 
-  // ADR-213: 初始化 instructor-js 客户端（tick callLLM 用 TOOLS mode 做结构化输出）
-  const { initInstructorClients } = await import("./llm/instructor-client.js");
-  initInstructorClients(config);
+  // ADR-233: 初始化 OpenAI 客户端（TC 循环用原生 tool_use）
+  const { initOpenAIClients } = await import("./engine/tick/callLLM.js");
+  initOpenAIClients(config);
 
   // ADR-226: 初始化 Reflect Provider（clustering 用 cheap model）
   const { initReflectClient } = await import("./engine/clustering.js");
@@ -756,9 +756,18 @@ async function main() {
     // Skill 同步完成后注入 registry + 收紧 strict 模式
     // deps 是引用类型——修改后 route() 的每次请求都会读到最新值
     engineApiDeps.registry = loadRegistry();
-    const artifactsSynced = ensureAllArtifacts();
-    if (artifactsSynced > 0) {
-      log.info("Skill artifacts synced to bin dir", { synced: artifactsSynced });
+    const artifactsResult = ensureAllArtifacts();
+    if (artifactsResult.synced > 0 || artifactsResult.fixed > 0) {
+      log.info("Skill artifacts verified", {
+        synced: artifactsResult.synced,
+        fixed: artifactsResult.fixed,
+        broken: artifactsResult.broken.length > 0 ? artifactsResult.broken : undefined,
+      });
+    }
+    if (artifactsResult.broken.length > 0) {
+      log.warn("Some skills have broken artifacts and could not be fixed", {
+        broken: artifactsResult.broken,
+      });
     }
     engineApiDeps.strictCapabilities = true;
     log.info("Engine API capability check: strict mode enabled");

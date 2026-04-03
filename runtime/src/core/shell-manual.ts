@@ -227,7 +227,7 @@ export async function generateShellManual(mods: readonly ModDefinition[]): Promi
     "",
     "## Afterward — what happens to this chat after your turn",
     "",
-    "The `run` tool requires an `afterward` field:",
+    "The `bash` tool requires an `afterward` signal (via the `signal` tool):",
     "- `done` — finished, nothing more to do. This is the default — use it most of the time.",
     "- `waiting_reply` — you JUST SAID something and are waiting for their response. If you asked a question, use this.",
     "- `watching` — something is unfolding, you want to observe before deciding.",

@@ -1,5 +1,5 @@
 /**
- * ADR-220: 频道场景渲染器。
+ * ADR-220 + ADR-237: 频道场景渲染器。
  *
  * 频道是信息流实体——阅读 + react + 转发给朋友。
  * 不出现 bot/awareness/feedback/threads/conversation state。
@@ -11,25 +11,38 @@
  * 4. 内心低语 — 从 facetId 获取的 whisper
  */
 
-import type { UserPromptSnapshot } from "../types.js";
+import type { ChatTargetType, UserPromptSnapshot } from "../types.js";
+import { localNow } from "../../telegram/apps/shared.js";
 
 export function renderChannel(snapshot: UserPromptSnapshot): string {
   const lines: string[] = [];
 
+  // ADR-237: 从 chatTargetType 判断是否自有频道
+  const isOwnedChannel = snapshot.chatTargetType === "channel_owned";
+
   // ── Section 1: 时间 + 心情 ──
   // LLM 需要知道当前时刻来判断内容时效性，心情影响转发决策
-  const now = new Date(snapshot.nowMs);
+  // ADR-34: 使用配置的时区，而非系统时区
+  const now = localNow(snapshot.timezoneOffset);
   const timeStr = now.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: `Etc/GMT${snapshot.timezoneOffset <= 0 ? '+' : '-'}${Math.abs(snapshot.timezoneOffset)}`,
   });
   lines.push(`${timeStr}. Current mood: ${snapshot.moodLabel}.`);
 
   // ── Section 2: 转发目标 ──
   // 联系人 @id + 兴趣 — LLM 决定 "谁会喜欢这个内容"
   // 群组 @id + topic — LLM 决定 "哪个群适合转发"
-  if (snapshot.contacts.length > 0 || snapshot.groups.length > 0) {
+  // ADR-237: 自己的频道 — 仅在浏览他人频道时作为策展转发目标
+  const ownedChannelsToShow = isOwnedChannel ? [] : snapshot.ownedChannels;
+
+  if (
+    snapshot.contacts.length > 0 ||
+    snapshot.groups.length > 0 ||
+    ownedChannelsToShow.length > 0
+  ) {
     lines.push("");
     lines.push("## People you might share with");
 
@@ -48,13 +61,24 @@ export function renderChannel(snapshot: UserPromptSnapshot): string {
       if (g.topic) parts.push(`(topic: ${g.topic})`);
       lines.push(`- ${parts.join(" ")}`);
     }
+
+    // ADR-237: 自己的频道作为策展转发目标（仅浏览他人频道时）
+    for (const ch of ownedChannelsToShow) {
+      const roleLabel = ch.role === "owner" ? "your channel" : "you admin";
+      lines.push(`- [channel] ${ch.ref.displayName} @${ch.ref.id} (${roleLabel})`);
+    }
   }
 
   // ── Section 3: 消息流 ──
   // 带 #msgId — LLM 用 irc forward --ref #msgId 引用特定内容
+  // ADR-237: 自有频道显示不同的标题
   if (snapshot.timeline.lines.length > 0) {
     lines.push("");
-    lines.push("## Recent posts (channel, you can read but not post)");
+    if (isOwnedChannel) {
+      lines.push("## Recent posts (your channel, you can post here)");
+    } else {
+      lines.push("## Recent posts (channel, you can read but not post)");
+    }
     for (const line of snapshot.timeline.lines) {
       lines.push(line);
     }

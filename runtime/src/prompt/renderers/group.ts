@@ -15,17 +15,20 @@
  */
 
 import type { UserPromptSnapshot } from "../types.js";
+import { localNow } from "../../telegram/apps/shared.js";
 
 export function renderGroup(snapshot: UserPromptSnapshot): string {
   const lines: string[] = [];
 
   // ── Section 1: 时间 + 心情 + 群组信息 ──
   // LLM 需要知道群组环境来调整参与度
-  const now = new Date(snapshot.nowMs);
+  // ADR-34: 使用配置的时区，而非系统时区
+  const now = localNow(snapshot.timezoneOffset);
   const timeStr = now.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: `Etc/GMT${snapshot.timezoneOffset <= 0 ? '+' : '-'}${Math.abs(snapshot.timezoneOffset)}`,
   });
 
   const metaParts: string[] = [];
@@ -54,6 +57,10 @@ export function renderGroup(snapshot: UserPromptSnapshot): string {
   if (snapshot.roundHint) {
     lines.push("");
     lines.push(snapshot.roundHint);
+  }
+  // ADR-232: TC episode 提示（watching 续轮后，告知结果已可见）
+  if (snapshot.episodeHint) {
+    lines.push(snapshot.episodeHint);
   }
 
   // ── Section 2: 防复读 ──

@@ -56,6 +56,7 @@ import {
 import type { WorldModel } from "../graph/world-model.js";
 import { estimateEventMs } from "../pressure/clock.js";
 import { effectiveObligation } from "../pressure/signal-decay.js";
+import { ChatTarget } from "../prompt/types.js";
 import { retrievability as calcRetrievability } from "../utils/math.js";
 import { humanDurationAgo } from "../utils/time-format.js";
 
@@ -1899,7 +1900,7 @@ export const relationshipsMod = createMod<RelationshipsState>("relationships", {
       if (directed > 0.1) mChannel.line("Directed here — reply needed");
 
       // ADR-64 VI-4: 群组画像展示
-      const isGroup = chatType === "group" || chatType === "supergroup";
+      const isGroup = ChatTarget.isGroupChat(chatType);
       const gp = ctx.state.groupProfiles?.[target];
       if (isGroup && gp) {
         if (gp.topic) mChannel.kv("Topic", gp.topic);
@@ -1931,6 +1932,7 @@ export const relationshipsMod = createMod<RelationshipsState>("relationships", {
       }
 
       // ADR-78 P1: 向 LLM 传达最近消息的内容类型，帮助 reading the room
+      // @see .claude/sessions/review-naturalness-h7l9At/prompt-diagnosis.md §D
       const lastContentType = attrs.last_content_type;
       if (lastContentType && lastContentType !== "text") {
         mChannel.kv(

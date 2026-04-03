@@ -190,7 +190,7 @@ export function compileAction(
     manifest.runtime ?? {
       backend: "shell" as const,
       timeout: 30,
-      network: true,
+      network: false, // ADR-201: 默认禁用网络，显式声明才启用
       isolation: "container" as const,
       memory: "512m",
     };

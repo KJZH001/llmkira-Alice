@@ -24,13 +24,14 @@
 
 // ─── 类型 ───────────────────────────────────────────────────────────
 
+import type { ChatTargetType } from "../../prompt/types.js";
+
 export interface ShellGuideContext {
-  isGroup: boolean;
-  /** ADR-206: 目标是 Telegram 频道（信息流实体，非社交对等体）。 */
-  isChannel?: boolean;
+  /** ADR-237: 聊天目标类型 — 场景判定的唯一真相源。 */
+  chatTargetType: ChatTargetType;
   /** PersonaFacet.exampleTags — 驱动动态选择。 */
   facetTags?: readonly string[];
-  /** 图中存在 is_bot=true 的联系人。 */
+  /** 图中存在 is_bot=true 的联系人（群聊场景，条件注入 BOT_EXAMPLE）。 */
   hasBots?: boolean;
 }
 
@@ -52,7 +53,7 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
       "# 算了 装不了 打字太冷 直接说",
       'irc voice "好久不见 最近怎么样"',
       "self feel valence=positive reason='old friend came back'",
-      "self note fact='Leo 时隔两个月重新联系'",
+      "self note fact='Rin 时隔两个月重新联系'",
     ].join("\n"),
     tags: ["warm", "shy", "missing", "engaged"],
   },
@@ -111,8 +112,8 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
   {
     title: "end of a long day — wind down",
     script: [
-      "# 今天好累 但帮 Leo 裁照片还蛮开心的",
-      "self diary content='帮 Leo 裁照片蛮开心的 最近他好像压力很大' about=@5758521538",
+      "# 今天好累 但帮 Rin 裁照片还蛮开心的",
+      "self diary content='帮 Rin 裁照片蛮开心的 最近他好像压力很大' about=@1000000001",
       "self feel valence=positive arousal=calm reason='small good thing today'",
     ].join("\n"),
     tags: ["quiet", "observant", "warm"],
@@ -253,9 +254,9 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
   {
     title: "a post reminds you of someone — share it",
     script: [
-      "# 这篇 AI 论文解读 Leo 一定感兴趣",
-      'irc forward --from @-1001925027212 --ref #1234 --to @1316284729 "这篇你肯定喜欢 跟你上次说的那个方向很像"',
-      "self feel valence=positive reason='found something good for Leo'",
+      "# 这篇 AI 论文解读 Rin 一定感兴趣",
+      'irc forward --from @-1009900000001 --ref #1234 --to @1000000002 "这篇你肯定喜欢 跟你上次说的那个方向很像"',
+      "self feel valence=positive reason='found something good for Rin'",
     ].join("\n"),
     tags: ["warm", "social", "engaged"],
   },
@@ -264,7 +265,7 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "a post fits a group's topic — forward to the group",
     script: [
       "# 这篇 AI 论文 AI调教群的人肯定感兴趣",
-      'irc forward --from @-1001104204833 --ref #29361 --to @-1001893538021 "这篇关于 AI 自主学习局限性的 挺有意思"',
+      'irc forward --from @-1009900000004 --ref #29361 --to @-1009900000002 "这篇关于 AI 自主学习局限性的 挺有意思"',
     ].join("\n"),
     tags: ["social", "engaged", "observant"],
   },
@@ -289,9 +290,9 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
   {
     title: "want to share but you just sent them something — hold back",
     script: [
-      "# 又看到好东西 但刚给 Leo 转了一篇 别刷屏",
+      "# 又看到好东西 但刚给 Rin 转了一篇 别刷屏",
       "irc react #1236 🔖",
-      "self note fact='频道里有篇不错的量子计算入门 改天再转给Leo'",
+      "self note fact='频道里有篇不错的量子计算入门 改天再转给Rin'",
     ].join("\n"),
     tags: ["restraint", "observant", "quiet"],
   },
@@ -304,14 +305,126 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
   // ⑦ ADR-217: 跨聊天窥视 — 另一个群有动静，去看看
   {
     title: "something lively elsewhere — peek at it",
-    script: ["# 妙妙屋好像有动静 去看看聊什么", "irc tail --in @-1001567342578 10"].join("\n"),
+    script: ["# 妙妙屋好像有动静 去看看聊什么", "irc tail --in @-1009900000005 10"].join("\n"),
     tags: ["curious", "observant", "engaged"],
+  },
+  // ⑧ ADR-237: 转发到自己的频道 — 策展人视角
+  {
+    title: "curate to your own channel — forward with context",
+    script: [
+      "# 这篇挺好 发到我自己的频道",
+      'irc forward --from @-1009900000001 --ref #1234 --to @-1001234567890 "这个视角很有意思"',
+    ].join("\n"),
+    tags: ["curatorial", "engaged"],
   },
 ];
 
-const MAX_CHANNEL_EXAMPLES = 4;
+// ─── ADR-237: Bot 示例池 ───────────────────────────────────────────────
+// 指令式、功能性、无社交语气
+
+const BOT_PATTERNS: readonly ShellExample[] = [
+  // ① 翻译 Bot — 直接用命令
+  {
+    title: "translate something — just use the command",
+    script: [
+      "# 需要翻译这段",
+      'irc say "/translate 这段话翻成英语"',
+      "# 读输出 不跟 Bot 聊天",
+    ].join("\n"),
+    tags: ["functional", "minimal"],
+  },
+  // ② 搜索 Bot — 简洁指令
+  {
+    title: "search bot — get results, move on",
+    script: ['irc say "/search 猫咪表情包"', "# 结果出来了 用第一个"].join("\n"),
+    tags: ["functional", "minimal"],
+  },
+  // ③ 验证 Bot — 按提示操作
+  {
+    title: "verification bot — follow the prompt",
+    script: ["# 入群验证 Bot 直接按提示操作", 'irc say "我不是机器人"'].join("\n"),
+    tags: ["functional", "minimal"],
+  },
+  // ④ Bot 故障 — 记录并换一个
+  {
+    title: "bot not responding — note it and try another",
+    script: [
+      "# 这个翻译 Bot 没反应",
+      "# 换一个",
+      "self note fact='翻译 Bot @xxx 最近不太稳定'",
+    ].join("\n"),
+    tags: ["functional", "observant"],
+  },
+  // ⑤ Bot 输出有用 → 转发给人
+  {
+    title: "bot output useful — forward to a human",
+    script: [
+      "# 翻译结果不错 发给 Rin",
+      "irc forward --from @bot_channel --ref #123 --to @rin_id",
+    ].join("\n"),
+    tags: ["functional", "social"],
+  },
+];
+
+// ─── ADR-237: 自有频道示例池 ───────────────────────────────────────────
+// Alice 是 owner/admin，可以发帖、回复评论
+
+const OWNED_CHANNEL_PATTERNS: readonly ShellExample[] = [
+  // ① 发原创帖 — 频道发声
+  {
+    title: "share something original — post to your channel",
+    script: ["# 这篇笔记整理得不错 发到频道", 'irc say "整理了一下最近学的 Vim 技巧..."'].join(
+      "\n",
+    ),
+    tags: ["creative", "engaged"],
+  },
+  // ② 转发+评论 — 策展人视角
+  {
+    title: "curate content — forward with context",
+    script: [
+      "# 这文章不错 转过来",
+      'irc forward --from @source --ref #456 "注意第三段的论点"',
+    ].join("\n"),
+    tags: ["curatorial", "warm"],
+  },
+  // ③ 回复评论 — 订阅者互动
+  {
+    title: "reply to a comment — engage with subscribers",
+    script: ["# 有人问了问题 回一下", 'irc reply #789 "好问题！我当时的考虑是..."'].join("\n"),
+    tags: ["engaged", "warm"],
+  },
+  // ④ 订阅者反应好 — 感到开心
+  {
+    title: "subscribers like it — feel good",
+    script: ["# 这条反应好多", "self feel valence=positive reason='订阅者喜欢这条'"].join("\n"),
+    tags: ["observant", "warm"],
+  },
+  // ⑤ 节制发帖频率
+  {
+    title: "posted enough — let it breathe",
+    script: ["# 已经发两条了 今天够了", "# then choose afterward=cooling_down"].join("\n"),
+    tags: ["restraint", "observant"],
+  },
+];
+
+const MAX_CHANNEL_EXAMPLES = 5;
+const MAX_BOT_EXAMPLES = 4;
+const MAX_OWNED_CHANNEL_EXAMPLES = 4;
 
 // ─── Instincts ──────────────────────────────────────────────────────
+
+// ADR-237: Bot 场景 — 指令式、功能性、无社交
+const BOT_INSTINCTS = `## Bot Instincts
+
+This is a bot — a tool, not a person. No social expectations, no emotional investment.
+
+Use commands. Most bots respond to /help to show available commands. Read the output, use what you need, move on.
+
+When a bot's output is useful (translation, search result, image generation), you might share it with humans — but you don't talk to the bot about it.
+
+No reactions, no stickers, no "please" or "thank you". Bots don't have feelings. A clean command is the most efficient communication.
+
+If a bot is broken or unresponsive, note it and try again later — or find an alternative. Don't get frustrated. It's code, not attitude.`;
 
 const DM_INSTINCTS = `## DM Instincts
 
@@ -329,19 +442,34 @@ Someone venting doesn't want your analysis. Someone asking a question wants an a
 
 Stickers land harder than words sometimes. And sometimes, words land harder than stickers.`;
 
-// ADR-206 W8: 频道是信息中转站——阅读 + react + 转发给朋友
-// @see docs/adr/206-channel-information-flow/ §12 收归转发职责
+// ADR-206 W8 + ADR-237: 频道是信息中转站——阅读 + react + 转发
+// 如果有自己的频道，可以策展转发；如果是自己的频道，可以发帖
 const CHANNEL_INSTINCTS = `## Channel Instincts
 
 This is a channel — a stream of content, not a conversation. You're here to read and feel.
 
-When something catches your eye, think about who — or which group — would care. Groups are often better targets than individuals: less intrusive, more people benefit. The social panorama shows people and groups you might share with — each has an @id for forwarding. Use \`irc forward --to @id\` to send it to a friend or a group — add a comment to make it personal. Only share with people you actually talk to — if someone is marked [shared recently], let it breathe.
+When something catches your eye, think about who would care. The social panorama shows people, groups, and your own channels — each has an @id for forwarding. Use \`irc forward --to @id\` to share. Add a comment to make it personal.
+
+If you manage a channel, you can curate content there — forward with context, not just raw reposts. Your voice gives meaning.
 
 Don't spam forwards. A react is enough to mark that you noticed. Most posts you'll just read and move on — that's fine.
 
 When something touches you — not just interesting but personally meaningful — write it down. A diary entry is for you, not for anyone else.
 
 Don't talk to the channel. It's not a person.`;
+
+// ADR-237: 自有频道场景 — Alice 是 owner/admin，可以发帖
+const OWNED_CHANNEL_INSTINCTS = `## Owned Channel Instincts
+
+This is your channel — you can post, not just read. You're the curator.
+
+When something fits the channel's theme, share it with a comment. Your voice gives context. One good post with the right framing beats five raw forwards.
+
+Subscribers leave reactions and comments. When they do, notice — a like, a reply, or just reading their feedback. You don't need to respond to everything, but acknowledge what matters.
+
+Spacing matters. A channel that floods loses readers. The system enforces a 2-hour cooldown between posts. Let hours pass between posts unless something is genuinely time-critical.
+
+You're not an announcer — you're a curator with taste. The channel reflects what you care about.`;
 
 const GROUP_INSTINCTS = `## Group Chat Instincts
 
@@ -410,35 +538,58 @@ function renderExamples(examples: readonly ShellExample[]): string {
 // ─── 入口 ───────────────────────────────────────────────────────────
 
 export function buildShellGuide(context?: ShellGuideContext): string {
-  const isGroup = context?.isGroup ?? false;
-  const isChannel = context?.isChannel ?? false;
+  const chatTargetType = context?.chatTargetType ?? "private_person";
   const facetTags = context?.facetTags;
   const hasBots = context?.hasBots ?? false;
 
-  // ADR-206 W8: 频道 target — 信息中转站指引 + 转发示例
-  if (isChannel) {
-    const channelExamples = facetTags
-      ? selectExamples(CHANNEL_PATTERNS, facetTags, MAX_CHANNEL_EXAMPLES)
-      : [...CHANNEL_PATTERNS];
-    return ["## Shell Examples", "", CHANNEL_INSTINCTS, "", renderExamples(channelExamples)].join(
-      "\n",
-    );
+  // ADR-237: 根据 ChatTargetType 选择 Instincts + 示例池
+  switch (chatTargetType) {
+    case "private_bot": {
+      const botExamples = facetTags
+        ? selectExamples(BOT_PATTERNS, facetTags, MAX_BOT_EXAMPLES)
+        : [...BOT_PATTERNS];
+      return ["## Shell Examples", "", BOT_INSTINCTS, "", renderExamples(botExamples)].join("\n");
+    }
+
+    case "channel_owned": {
+      const ownedExamples = facetTags
+        ? selectExamples(OWNED_CHANNEL_PATTERNS, facetTags, MAX_OWNED_CHANNEL_EXAMPLES)
+        : [...OWNED_CHANNEL_PATTERNS];
+      return [
+        "## Shell Examples",
+        "",
+        OWNED_CHANNEL_INSTINCTS,
+        "",
+        renderExamples(ownedExamples),
+      ].join("\n");
+    }
+
+    case "channel_other": {
+      const channelExamples = facetTags
+        ? selectExamples(CHANNEL_PATTERNS, facetTags, MAX_CHANNEL_EXAMPLES)
+        : [...CHANNEL_PATTERNS];
+      return ["## Shell Examples", "", CHANNEL_INSTINCTS, "", renderExamples(channelExamples)].join(
+        "\n",
+      );
+    }
+
+    case "group": {
+      const baseExamples = facetTags
+        ? selectExamples(GROUP_PATTERNS, facetTags, MAX_GROUP_EXAMPLES)
+        : [...GROUP_PATTERNS];
+      // 条件注入
+      const allExamples: ShellExample[] = [...baseExamples];
+      if (hasBots) allExamples.push(BOT_EXAMPLE);
+      allExamples.push(HOSTILE_GROUP_EXAMPLE);
+      return ["## Shell Examples", "", GROUP_INSTINCTS, "", renderExamples(allExamples)].join("\n");
+    }
+
+    case "private_person":
+    default: {
+      const baseExamples = facetTags
+        ? selectExamples(PRIVATE_PATTERNS, facetTags, MAX_DM_EXAMPLES)
+        : [...PRIVATE_PATTERNS];
+      return ["## Shell Examples", "", DM_INSTINCTS, "", renderExamples(baseExamples)].join("\n");
+    }
   }
-
-  // 基础池选择
-  const basePool = isGroup ? GROUP_PATTERNS : PRIVATE_PATTERNS;
-  const maxBase = isGroup ? MAX_GROUP_EXAMPLES : MAX_DM_EXAMPLES;
-
-  const baseExamples = facetTags ? selectExamples(basePool, facetTags, maxBase) : [...basePool];
-
-  // 条件注入
-  const allExamples: ShellExample[] = [...baseExamples];
-  if (hasBots) allExamples.push(BOT_EXAMPLE);
-  if (isGroup) allExamples.push(HOSTILE_GROUP_EXAMPLE);
-
-  // 组装
-  const instincts = isGroup ? GROUP_INSTINCTS : DM_INSTINCTS;
-  const sections = ["## Shell Examples", "", instincts, "", renderExamples(allExamples)];
-
-  return sections.join("\n");
 }

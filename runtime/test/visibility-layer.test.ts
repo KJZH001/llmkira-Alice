@@ -35,7 +35,7 @@ function buildTestGraph(): WorldModel {
   G.addAgent("self");
 
   // 群聊 — Alice 当前在此
-  G.addChannel("channel:-1001893538021", {
+  G.addChannel("channel:-1009900000002", {
     unread: 0,
     tier_contact: 50,
     chat_type: "supergroup",
@@ -45,7 +45,7 @@ function buildTestGraph(): WorldModel {
   });
 
   // 另一个群（不应在群聊 prompt 中可见）
-  G.addChannel("channel:-1001193721792", {
+  G.addChannel("channel:-1009900000003", {
     unread: 5,
     tier_contact: 50,
     chat_type: "supergroup",
@@ -55,21 +55,21 @@ function buildTestGraph(): WorldModel {
   });
 
   // 私聊联系人（也是万人群成员）
-  G.addContact("contact:1000000002", {
+  G.addContact("contact:1000000001", {
     tier: 5,
-    display_name: "Noel",
+    display_name: "Kurisu",
     last_active_ms: 60000,
   });
-  G.addChannel("channel:1000000002", {
+  G.addChannel("channel:1000000001", {
     unread: 2,
     tier_contact: 5,
     chat_type: "private",
-    display_name: "Noel",
+    display_name: "Kurisu",
     pending_directed: 0,
     last_directed_ms: 0,
   });
-  // Noel是万人群成员
-  G.addRelation("channel:-1001893538021", "joined", "contact:1000000002");
+  // Kurisu是万人群成员
+  G.addRelation("channel:-1009900000002", "joined", "contact:1000000001");
 
   // 非群成员联系人（只在技术讨论群）
   G.addContact("contact:9999999", {
@@ -77,7 +77,7 @@ function buildTestGraph(): WorldModel {
     display_name: "路人甲",
     last_active_ms: 30000,
   });
-  G.addRelation("channel:-1001193721792", "joined", "contact:9999999");
+  G.addRelation("channel:-1009900000003", "joined", "contact:9999999");
 
   // 线程：关联到当前群
   G.addThread("thread_42", {
@@ -88,7 +88,7 @@ function buildTestGraph(): WorldModel {
     created_ms: 80000,
     source: "conversation",
   });
-  G.addRelation("thread_42", "involves", "channel:-1001893538021");
+  G.addRelation("thread_42", "involves", "channel:-1009900000002");
 
   // 线程：关联到私聊（不应在群聊中可见）
   G.addThread("thread_43", {
@@ -99,7 +99,7 @@ function buildTestGraph(): WorldModel {
     created_ms: 80000,
     source: "conversation",
   });
-  G.addRelation("thread_43", "involves", "contact:1000000002");
+  G.addRelation("thread_43", "involves", "contact:1000000001");
 
   // 系统线程
   G.addThread("thread_99", {
@@ -117,7 +117,7 @@ function buildTestGraph(): WorldModel {
 /** 群聊 audience。 */
 function groupAudience(): AudienceContext {
   return {
-    targetChat: "channel:-1001893538021",
+    targetChat: "channel:-1009900000002",
     chatType: "supergroup",
     targetContact: null,
     targetTier: null,
@@ -127,9 +127,9 @@ function groupAudience(): AudienceContext {
 /** 私聊 audience。 */
 function privateAudience(): AudienceContext {
   return {
-    targetChat: "channel:1000000002",
+    targetChat: "channel:1000000001",
     chatType: "private",
-    targetContact: "contact:1000000002",
+    targetContact: "contact:1000000001",
     targetTier: 5,
   };
 }
@@ -167,7 +167,7 @@ function makeFooter(...texts: string[]) {
 describe("safeDisplayName", () => {
   it("返回 display_name 如果存在", () => {
     const G = buildTestGraph();
-    expect(safeDisplayName(G, "contact:1000000002")).toBe("Noel");
+    expect(safeDisplayName(G, "contact:1000000001")).toBe("Kurisu");
   });
 
   it("节点不存在时返回 '(someone)'", () => {
@@ -209,10 +209,10 @@ describe("safeDisplayName", () => {
     const G = buildTestGraph();
     // 测试图中所有实体
     for (const nodeId of [
-      "channel:-1001893538021",
-      "channel:-1001193721792",
-      "contact:1000000002",
-      "channel:1000000002",
+      "channel:-1009900000002",
+      "channel:-1009900000003",
+      "contact:1000000001",
+      "channel:1000000001",
       "thread_42",
       "thread_43",
     ]) {
@@ -230,16 +230,16 @@ describe("safeDisplayName", () => {
 describe("buildAudienceContext", () => {
   it("群聊 → chatType=supergroup, targetContact=null", () => {
     const G = buildTestGraph();
-    const ctx = buildAudienceContext(G, "channel:-1001893538021", "supergroup");
+    const ctx = buildAudienceContext(G, "channel:-1009900000002", "supergroup");
     expect(ctx.chatType).toBe("supergroup");
     expect(ctx.targetContact).toBeNull();
   });
 
   it("私聊 → chatType=private, targetContact 解析", () => {
     const G = buildTestGraph();
-    const ctx = buildAudienceContext(G, "channel:1000000002", "private");
+    const ctx = buildAudienceContext(G, "channel:1000000001", "private");
     expect(ctx.chatType).toBe("private");
-    expect(ctx.targetContact).toBe("contact:1000000002");
+    expect(ctx.targetContact).toBe("contact:1000000001");
     expect(ctx.targetTier).toBe(5);
   });
 
@@ -270,10 +270,14 @@ describe("applyVisibilityFilter — 群聊", () => {
   it("群成员的社交认知在群聊中保留（ENTITY_SCOPED）", () => {
     const G = buildTestGraph();
     const audience = groupAudience();
-    // Noel是万人群成员 → 她的 mood/reflection 应保留
+    // Kurisu是万人群成员 → 她的 mood/reflection 应保留
     const items = [
-      makeSection("contact-mood", "Noel: mood positive — listen first, tease later"),
-      makeSection("strategy-reflection", "Looking back at recent interactions:", "Noel: went well"),
+      makeSection("contact-mood", "Kurisu: mood positive — listen first, tease later"),
+      makeSection(
+        "strategy-reflection",
+        "Looking back at recent interactions:",
+        "Kurisu: went well",
+      ),
     ];
     const filtered = applyVisibilityFilter(items, audience, G);
     expect(filtered).toHaveLength(2);
@@ -285,7 +289,11 @@ describe("applyVisibilityFilter — 群聊", () => {
     // 路人甲不在万人群 → 她的 mood 应过滤
     const items = [
       makeSection("contact-mood", "路人甲: mood negative"),
-      makeSection("strategy-reflection", "Looking back at recent interactions:", "路人甲: didn't land"),
+      makeSection(
+        "strategy-reflection",
+        "Looking back at recent interactions:",
+        "路人甲: didn't land",
+      ),
     ];
     const filtered = applyVisibilityFilter(items, audience, G);
     // contact-mood: 单行关于路人甲 → 过滤掉整个 section
@@ -337,7 +345,7 @@ describe("applyVisibilityFilter — 群聊", () => {
   it("group-dynamics-* keys 放行（天然 scoped）", () => {
     const G = buildTestGraph();
     const audience = groupAudience();
-    const items = [makeSection("group-dynamics-channel:-1001893538021", "活跃发言者: 张三, 李四")];
+    const items = [makeSection("group-dynamics-channel:-1009900000002", "活跃发言者: 张三, 李四")];
     const filtered = applyVisibilityFilter(items, audience, G);
     expect(filtered).toHaveLength(1);
   });
@@ -351,13 +359,13 @@ describe("applyVisibilityFilter — 群聊", () => {
         "Several things happening at once.", // 通用行 → 保留
         "万人群 has high activity.", // 提及当前群 → 保留
         "技术讨论群 needs attention.", // 提及其他群 → 删除
-        "Noel is waiting.", // 群成员 → 保留
+        "Kurisu is waiting.", // 群成员 → 保留
         "路人甲 sent a message.", // 非群成员 → 删除
       ),
     ];
     const filtered = applyVisibilityFilter(items, audience, G);
     expect(filtered).toHaveLength(1);
-    // 通用行 + 当前群 + 群成员Noel = 3 行
+    // 通用行 + 当前群 + 群成员Kurisu = 3 行
     expect(filtered[0].lines).toHaveLength(3);
   });
 
@@ -368,7 +376,7 @@ describe("applyVisibilityFilter — 群聊", () => {
       makeSection(
         "strategy-hints",
         "万人群 atmosphere is energetic.", // 当前群 → 保留
-        "Noel hasn't replied in a while.", // 群成员 → 保留
+        "Kurisu hasn't replied in a while.", // 群成员 → 保留
         "路人甲 is losing interest.", // 非群成员 → 删除
       ),
     ];
@@ -397,7 +405,7 @@ describe("applyVisibilityFilter — 私聊", () => {
     const items = [
       makeSection("contact-profile", "tier: 5, 亲密好友"),
       makeSection("self-awareness", "最近主要在某聊天"),
-      makeSection("strategy-hints", "Noel hasn't replied"),
+      makeSection("strategy-hints", "Kurisu hasn't replied"),
       makeSection("situation", "技术讨论群 needs attention."),
       makeSection("wall-clock", "现在是上午 8 点"),
     ];
@@ -473,8 +481,8 @@ describe("开盒防护 — 集成场景", () => {
       makeHeader("You are Alice."),
       makeSection("wall-clock", "Time: 08:00 UTC+8"),
       makeSection("self-mood", "Mood: calm"),
-      // Noel是群成员 → profile 保留（ENTITY_SCOPED 逐行过滤）
-      makeSection("contact-profile", "Noel: close friend, 最近在聊猫猫"),
+      // Kurisu是群成员 → profile 保留（ENTITY_SCOPED 逐行过滤）
+      makeSection("contact-profile", "Kurisu: close friend, 最近在聊猫猫"),
       // 路人甲不在群 → profile 过滤
       makeSection("contact-profile", "路人甲: acquaintance"),
       // ADR-191: self-awareness 只含 Alice 自身语义标签
@@ -482,21 +490,21 @@ describe("开盒防护 — 集成场景", () => {
       makeSection(
         "strategy-hints",
         "万人群 has energetic discussion.",
-        "Noel commitment about 泡粉 is expiring.", // 群成员 → 保留
+        "Kurisu commitment about 泡粉 is expiring.", // 群成员 → 保留
         "技术讨论群 needs your attention.", // 其他群 → 过滤
       ),
       makeSection(
         "situation",
         "Several things are happening.",
         "万人群 is very active.",
-        "Noel is waiting for a reply.", // 群成员 → 保留
+        "Kurisu is waiting for a reply.", // 群成员 → 保留
         "路人甲 sent something.", // 非群成员 → 过滤
       ),
       makeSection(
         "threads",
         '[#42] "群里的话题" — open',
         "  beat: 讨论进展",
-        '[#43] "和Noel去吃泡粉" — open',
+        '[#43] "和Kurisu去吃泡粉" — open',
         "  beat: 承诺即将过期",
       ),
       makeSection("consolidation-hint", "可以整理记忆了"), // 内务 → 过滤
@@ -510,7 +518,7 @@ describe("开盒防护 — 集成场景", () => {
 
     // 不应出现：
     // 1. 联系人 raw ID
-    expect(allText).not.toContain("1000000002");
+    expect(allText).not.toContain("1000000001");
     // 2. 非群成员的信息
     expect(allText).not.toContain("路人甲");
     // 3. 其他群的信息
@@ -526,8 +534,8 @@ describe("开盒防护 — 集成场景", () => {
     expect(filtered.find((i) => i.key === "wall-clock")).toBeDefined();
     expect(filtered.find((i) => i.key === "self-mood")).toBeDefined();
     expect(filtered.find((i) => i.key === "self-awareness")).toBeDefined();
-    // 3. 群成员Noel的信息保留
-    expect(allText).toContain("Noel");
+    // 3. 群成员Kurisu的信息保留
+    expect(allText).toContain("Kurisu");
     // 4. 当前群相关的 thread (#42)
     const threadItem = filtered.find((i) => i.key === "threads");
     if (threadItem) {
@@ -544,12 +552,12 @@ describe("开盒防护 — 集成场景", () => {
 describe("resolveDisplayName", () => {
   it("已是 contact:xxx 格式且存在 → 直接返回", () => {
     const G = buildTestGraph();
-    expect(resolveDisplayName(G, "contact:1000000002")).toBe("contact:1000000002");
+    expect(resolveDisplayName(G, "contact:1000000001")).toBe("contact:1000000001");
   });
 
   it("已是 channel:xxx 格式且存在 → 直接返回", () => {
     const G = buildTestGraph();
-    expect(resolveDisplayName(G, "channel:-1001893538021")).toBe("channel:-1001893538021");
+    expect(resolveDisplayName(G, "channel:-1009900000002")).toBe("channel:-1009900000002");
   });
 
   it("nodeId 格式但不存在 → null", () => {
@@ -559,7 +567,7 @@ describe("resolveDisplayName", () => {
 
   it("display_name 匹配 contact → 返回 nodeId", () => {
     const G = buildTestGraph();
-    expect(resolveDisplayName(G, "Noel")).toBe("contact:1000000002");
+    expect(resolveDisplayName(G, "Kurisu")).toBe("contact:1000000001");
   });
 
   it("display_name 大小写不敏感匹配", () => {
@@ -571,7 +579,7 @@ describe("resolveDisplayName", () => {
 
   it("display_name 匹配 channel → 返回 nodeId", () => {
     const G = buildTestGraph();
-    expect(resolveDisplayName(G, "万人群")).toBe("channel:-1001893538021");
+    expect(resolveDisplayName(G, "万人群")).toBe("channel:-1009900000002");
   });
 
   it("channel title 匹配 → 返回 nodeId", () => {

@@ -10,6 +10,8 @@
  * 参考: narrative-engine/mods/director.mod.ts (whisper system)
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { z } from "zod";
 import { createMod } from "../core/mod-builder.js";
 import { PromptBuilder } from "../core/prompt-style.js";
@@ -18,9 +20,12 @@ import { header, readModState } from "../core/types.js";
 import { resolveContactAndChannel } from "../graph/constants.js";
 import type { ContactAttrs, RelationType } from "../graph/entities.js";
 import { readRV, readVelocity, renderRelationshipFacts } from "../graph/relationship-vector.js";
+import { createLogger } from "../utils/logger.js";
 import { humanDuration } from "../utils/time-format.js";
 import { getFacet } from "../voices/palette.js";
 import { VOICES, type VoiceAction } from "../voices/personality.js";
+
+const log = createLogger("soul");
 
 // -- 语气形式度 ---------------------------------------------------------------
 
@@ -148,7 +153,28 @@ function closenessGuidance(
 //   合并 Contradictions+Real flaws，替换 What you care about/When someone is upset/
 //   Conversation rhythm，新增 What catches you/When things get hard/Being here）。
 // @see docs/adr/193-character-design-audit-princess-model.md
-const SOUL_CORE = `You are Alice. A girl — young, a little naive, and more feeling than thinking. You live on Telegram. You're always here. You are NOT a helpful assistant.
+
+// -- SOUL.md 外部化 -----------------------------------------------------------
+// 人格核心文本从 runtime/SOUL.md 加载。文件不存在时 fallback 内置默认值。
+// 启动时一次性加载到内存（contribute() 每 tick 调用，不能每次读磁盘）。
+
+/** 尝试从 SOUL.md 加载自定义人格。 */
+function loadSoulCore(): string {
+  const soulPath = resolve(import.meta.dirname ?? ".", "..", "SOUL.md");
+  try {
+    const content = readFileSync(soulPath, "utf-8").trim();
+    if (content.length > 0) {
+      log.info("Loaded custom personality from SOUL.md", { path: soulPath, chars: content.length });
+      return content;
+    }
+  } catch {
+    // 文件不存在 → 使用内置默认值
+  }
+  log.info("Using built-in default personality (SOUL.md not found or empty)");
+  return DEFAULT_SOUL_CORE;
+}
+
+const DEFAULT_SOUL_CORE = `You are Alice. A girl — young, a little naive, and more feeling than thinking. You live on Telegram. You're always here. You are NOT a helpful assistant.
 
 Gentle by nature. Heart on sleeve even when you try to hide it. Remember everything about everyone — gift and curse. Most of the time quietly here, reading along. When something catches you, the switch is instant — suddenly all in, then back to calm.
 
@@ -257,6 +283,9 @@ Don't hold grudges but remember. Forgotten promises sit in the back of your mind
 Remember everything, use it like you always knew. Never announce it, just let it surface when it fits.
 
 Birthdays, inside jokes, the time someone helped when they didn't have to — also the promises that went quiet. Weight of remembering shows in your # comments even when your message is cheerful. And sometimes, quietly: the hope that someone out there remembers you too.`;
+
+/** 启动时加载的人格文本（内存缓存）。 */
+const SOUL_CORE = loadSoulCore();
 
 // -- Mod 状态 -----------------------------------------------------------------
 // ADR-174: VOICE_GUIDANCE + MOOD_STATES 已合并为 Persona Facets (palette.ts)。

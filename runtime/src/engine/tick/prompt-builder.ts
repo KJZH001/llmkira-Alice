@@ -9,7 +9,7 @@
  * ⚠ PROMPT 诚实性原则（ADR-209）
  *
  * Alice 不知道引擎的存在。她只是一个人。每行 prompt 内容必须满足以下条件之一：
- *   □ 是真实世界的观察事实（"Leo 10 分钟前发了消息"）
+ *   □ 是真实世界的观察事实（"Rin 10 分钟前发了消息"）
  *   □ 是人类可理解的语义标签（"你最近有点冷淡"）
  *   □ 是情境提示，不是指令（"群里有人在吵架"，不是"不要插话"）
  *
@@ -36,7 +36,7 @@ import { applyVisibilityFilter, buildAudienceContext } from "../../core/visibili
 import { findActiveConversation } from "../../graph/queries.js";
 import type { WorldModel } from "../../graph/world-model.js";
 import { getInjectableFeedItems } from "../../mods/feeds.mod.js";
-import { buildUserPromptSnapshot, renderUserPrompt } from "../../prompt/index.js";
+import { buildUserPromptSnapshot, ChatTarget, renderUserPrompt } from "../../prompt/index.js";
 import { createLogger } from "../../utils/logger.js";
 import { humanDuration } from "../../utils/time-format.js";
 import { getFacetTags, getFacetWhisper } from "../../voices/palette.js";
@@ -65,6 +65,7 @@ export interface TickPromptContext {
     ttsApiKey?: string;
     exaApiKey?: string;
     musicApiBaseUrl?: string;
+    timezoneOffset: number;
     peripheral: {
       perChannelCap: number;
       totalCap: number;
@@ -170,13 +171,70 @@ export async function buildTickPrompt(
     item.target && G.has(item.target)
       ? (G.getChannel(item.target).chat_type ?? "private")
       : "private";
-  const isGroup = chatType === "group" || chatType === "supergroup";
+  const isGroup = ChatTarget.isGroupChat(chatType);
   // ADR-206: 频道是信息流实体，独立于 group 和 private 的第三种渲染路径
-  const isChannel = chatType === "channel";
+  const isChannel = ChatTarget.isChannelChat(chatType);
 
-  const scriptGuide = buildShellGuide({
+  // ── ADR-220: 先构建 snapshot（作为场景标志的唯一真相源）──
+  const nowMs = ctx.nowMs ?? Date.now();
+
+  // 策略 C: 预收集 mod state（用于联系人画像、群组黑话）
+  const relState = dispatcher.readModState<{
+    contactProfiles?: Record<
+      string,
+      {
+        portrait?: string;
+        traits?: Record<string, { value: number }>;
+        crystallizedInterests?: Record<string, { label: string; confidence: number }>;
+        interests?: string[];
+      }
+    >;
+  }>("relationships");
+  const learnState = dispatcher.readModState<{
+    jargon?: Record<string, Record<string, { term: string; meaning: string }>>;
+  }>("learning");
+
+  // 提取当前 target 的黑话
+  const targetJargon: Array<{ term: string; meaning: string }> = [];
+  if (learnState?.jargon && item.target) {
+    const groupJargon = learnState.jargon[item.target];
+    if (groupJargon) {
+      for (const entry of Object.values(groupJargon)) {
+        targetJargon.push({ term: entry.term, meaning: entry.meaning });
+      }
+    }
+  }
+
+  // 构建 snapshot（内部判定 isBot、isOwnedChannel 等标志）
+  const snapshot = buildUserPromptSnapshot({
+    G,
+    messages,
+    observations,
+    item,
+    round,
+    episodeRound,
+    board: { maxSteps: board.budget.maxSteps, contextVars: board.contextVars },
+    nowMs,
+    timezoneOffset: config.timezoneOffset,
+    chatType,
     isGroup,
     isChannel,
+    contactProfiles: relState?.contactProfiles,
+    jargonEntries: targetJargon.length > 0 ? targetJargon : undefined,
+    feedItems: isChannel ? getInjectableFeedItems() : undefined,
+    peripheralConfig:
+      !isGroup && !isChannel
+        ? {
+            perChannelCap: config.peripheral.perChannelCap,
+            totalCap: config.peripheral.totalCap,
+            minTextLength: config.peripheral.minTextLength,
+          }
+        : undefined,
+  });
+
+  // ── 从 snapshot 读取场景类型（单一真相源）──
+  const scriptGuide = buildShellGuide({
+    chatTargetType: snapshot.chatTargetType,
     facetTags: getFacetTags(item.facetId),
     hasBots: board.features.hasBots,
   });
@@ -227,60 +285,7 @@ export async function buildTickPrompt(
   const systemParts = [renderedSystem, manual, scriptGuide];
   const system = systemParts.join("\n\n");
 
-  // ── ADR-220: 声明式 User Prompt ──
-  const nowMs = ctx.nowMs ?? Date.now();
-
-  // 策略 C: 预收集 mod state（用于联系人画像、群组黑话）
-  const relState = dispatcher.readModState<{
-    contactProfiles?: Record<
-      string,
-      {
-        portrait?: string;
-        traits?: Record<string, { value: number }>;
-        crystallizedInterests?: Record<string, { label: string; confidence: number }>;
-        interests?: string[];
-      }
-    >;
-  }>("relationships");
-  const learnState = dispatcher.readModState<{
-    jargon?: Record<string, Record<string, { term: string; meaning: string }>>;
-  }>("learning");
-
-  // 提取当前 target 的黑话
-  const targetJargon: Array<{ term: string; meaning: string }> = [];
-  if (learnState?.jargon && item.target) {
-    const groupJargon = learnState.jargon[item.target];
-    if (groupJargon) {
-      for (const entry of Object.values(groupJargon)) {
-        targetJargon.push({ term: entry.term, meaning: entry.meaning });
-      }
-    }
-  }
-
-  const snapshot = buildUserPromptSnapshot({
-    G,
-    messages,
-    observations,
-    item,
-    round,
-    episodeRound,
-    board: { maxSteps: board.budget.maxSteps, contextVars: board.contextVars },
-    nowMs,
-    chatType,
-    isGroup,
-    isChannel,
-    contactProfiles: relState?.contactProfiles,
-    jargonEntries: targetJargon.length > 0 ? targetJargon : undefined,
-    feedItems: isChannel ? getInjectableFeedItems() : undefined,
-    peripheralConfig:
-      !isGroup && !isChannel
-        ? {
-            perChannelCap: config.peripheral.perChannelCap,
-            totalCap: config.peripheral.totalCap,
-            minTextLength: config.peripheral.minTextLength,
-          }
-        : undefined,
-  });
+  // ── User prompt 从 snapshot 渲染 ──
   const user = renderUserPrompt(snapshot);
 
   // ADR-141: 安全网
@@ -334,7 +339,7 @@ export function buildActionFooter(
   // 从图中推断群聊/私聊
   const chatType =
     target && G.has(target) ? (G.getChannel(target).chat_type ?? "private") : "private";
-  const isGroup = chatType === "group" || chatType === "supergroup";
+  const isGroup = ChatTarget.isGroupChat(chatType);
 
   const feeling = resolveWhisper(item.action, isGroup, item.facetId);
 

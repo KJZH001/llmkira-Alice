@@ -1,12 +1,15 @@
 /**
  * 内容寻址存储 — Nix 风格 SHA256 + 目录结构。
  *
- * store/{hash}/ 下存放 manifest.yaml + 执行体。
+ * store/{hash}/ 下存放 manifest.yaml + 源码。
  * 同 manifest + 同版本 = 同 hash → 幂等安装，不重复。
+ *
+ * 安装时使用 Go 编译为静态二进制可执行文件。
  *
  * @see docs/adr/201-os-for-llm.md
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -17,138 +20,75 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
-import { getAliceStoreRoot } from "./registry.js";
+import { join, resolve } from "node:path";
 
-/** 存储根目录（开发态可在 workspace，runner/container 可绑定到系统前缀）。 */
-const DEFAULT_STORE_ROOT = getAliceStoreRoot();
+/** 存储根目录。 */
+const DEFAULT_STORE_ROOT = process.env.ALICE_STORE_ROOT
+  ? resolve(process.env.ALICE_STORE_ROOT)
+  : resolve(import.meta.dirname ?? ".", "../../skills/store");
 
-function writeLauncher(storePath: string, skillName: string): void {
-  const launcherPath = join(storePath, skillName);
-  const launcher = [
-    "#!/usr/bin/env sh",
-    'DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"',
-    `exec npx tsx "$DIR/bin/${skillName}.ts" "$@"`,
-    "",
-  ].join("\n");
-  writeFileSync(launcherPath, launcher);
-  chmodSync(launcherPath, 0o755);
+/** 获取存储根目录。 */
+export function getAliceStoreRoot(): string {
+  return DEFAULT_STORE_ROOT;
 }
 
-function normalizePackageManuals(storePath: string, sourceDir?: string): void {
-  if (!sourceDir) return;
-
-  const canonicalManRoot = join(storePath, "share", "man");
-  const sourceShareMan = join(sourceDir, "share", "man");
-  const sourceLooseMan = join(sourceDir, "man");
-
-  if (existsSync(sourceShareMan) && !existsSync(canonicalManRoot)) {
-    mkdirSync(join(storePath, "share"), { recursive: true });
-    cpSync(sourceShareMan, canonicalManRoot, { recursive: true });
-    return;
-  }
-
-  if (existsSync(sourceLooseMan) && !existsSync(canonicalManRoot)) {
-    mkdirSync(join(storePath, "share"), { recursive: true });
-    cpSync(sourceLooseMan, canonicalManRoot, { recursive: true });
-  }
-}
-
-interface ParsedManifest {
-  name?: string;
-  description?: string;
-  manPage?: string;
-  actions?: Array<{
-    whenToUse?: string;
-    description?: string[];
-    params?: Array<{
-      name?: string;
-      required?: boolean;
-    }>;
-  }>;
-}
-
-/** 从 ParsedManifest 提取手册生成所需的公共字段。 */
-function extractManualFields(manifest: ParsedManifest, skillName: string) {
-  const description = manifest.description ?? `${skillName} skill command`;
-  const action = manifest.actions?.[0];
-  const whenToUse = action?.whenToUse ?? "Use when this capability is relevant.";
-  return { description, action, whenToUse };
-}
-
-function buildParamSynopsis(
-  action: { params?: Array<{ name?: string; required?: boolean }> } | undefined,
+/**
+ * 编译 skill 为静态 Go 二进制可执行文件。
+ *
+ * 优先使用 dist/bin/ 下已编译的二进制（make 产物），
+ * 否则使用 `go build` 从 cmd/skills/{name}/ 编译。
+ *
+ * 与 Makefile 保持一致：CGO_ENABLED=0 go build -ldflags="-s -w"
+ */
+export function compileSkillExecutable(
+  _storePath: string,
   skillName: string,
-  upperCase = false,
+  binDir: string,
 ): string {
-  const params =
-    action?.params?.map((param) => {
-      const name = upperCase ? (param.name ?? "arg").toUpperCase() : (param.name ?? "arg");
-      return param.required === false ? `[${name}=...]` : `${name}=...`;
-    }) ?? [];
-  return [skillName, ...params].join(" ");
-}
+  const outputFile = join(binDir, skillName);
+  const runtimeDir = resolve(import.meta.dirname ?? ".", "../..");
 
-function buildFallbackManualText(manifest: ParsedManifest, skillName: string): string {
-  const { description, action, whenToUse } = extractManualFields(manifest, skillName);
-  const title = manifest.name ?? skillName;
-  const synopsis = buildParamSynopsis(action, skillName);
+  // 确保目标目录存在
+  mkdirSync(binDir, { recursive: true });
 
-  return [
-    `${title} - ${description}`,
-    "",
-    "Usage:",
-    `  ${synopsis}`,
-    "",
-    "When to use:",
-    `  ${whenToUse}`,
-    "",
-  ].join("\n");
-}
-
-function buildFallbackManpage(manifest: ParsedManifest, skillName: string): string {
-  const { description, action, whenToUse } = extractManualFields(manifest, skillName);
-  const title = (manifest.name ?? skillName).toUpperCase();
-  const synopsis = buildParamSynopsis(action, skillName, true);
-
-  return [
-    `.TH ${title} 1`,
-    `.SH NAME`,
-    `${skillName} \\- ${description}`,
-    `.SH SYNOPSIS`,
-    synopsis,
-    `.SH DESCRIPTION`,
-    whenToUse,
-    "",
-  ].join("\n");
-}
-
-function writeFallbackManuals(
-  storePath: string,
-  manifestContent: string,
-  skillName?: string,
-): void {
-  if (!skillName) return;
-
-  const parsed = parseYaml(manifestContent) as ParsedManifest;
-  const manRoot = join(storePath, "share", "man");
-  const txtRoot = join(manRoot, "txt");
-  const man1Root = join(manRoot, "man1");
-  mkdirSync(txtRoot, { recursive: true });
-  mkdirSync(man1Root, { recursive: true });
-
-  const txtPath = join(txtRoot, `${skillName}.txt`);
-  if (!existsSync(txtPath)) {
-    // 优先使用 manifest 中的完整 manPage，否则自动生成
-    const txtContent = parsed.manPage ?? buildFallbackManualText(parsed, skillName);
-    writeFileSync(txtPath, txtContent);
+  // 1) 优先：dist/bin/ 下已有编译好的二进制（make 产物）
+  const prebuilt = join(runtimeDir, "dist", "bin", skillName);
+  if (existsSync(prebuilt)) {
+    cpSync(prebuilt, outputFile);
+    chmodSync(outputFile, 0o755);
+    return outputFile;
   }
 
-  const manPath = join(man1Root, `${skillName}.1`);
-  if (!existsSync(manPath)) {
-    writeFileSync(manPath, buildFallbackManpage(parsed, skillName));
+  // 2) 从 cmd/skills/{name}/ 用 Go 编译
+  const goSource = join(runtimeDir, "cmd", "skills", skillName);
+  if (!existsSync(goSource)) {
+    throw new Error(
+      `Skill "${skillName}": no prebuilt binary in dist/bin/ and no Go source in cmd/skills/${skillName}/`,
+    );
   }
+
+  // 移除旧文件（如果存在）
+  rmSync(outputFile, { force: true });
+
+  const result = spawnSync(
+    "go",
+    ["build", "-ldflags=-s -w", "-o", outputFile, `./${join("cmd", "skills", skillName)}`],
+    {
+      encoding: "utf-8",
+      cwd: runtimeDir,
+      timeout: 120000,
+      env: { ...process.env, CGO_ENABLED: "0" },
+    },
+  );
+
+  if (result.status !== 0 || !existsSync(outputFile)) {
+    throw new Error(
+      `Failed to compile skill "${skillName}": ${result.stderr || result.error?.message || "unknown error"}`,
+    );
+  }
+
+  chmodSync(outputFile, 0o755);
+  return outputFile;
 }
 
 /**
@@ -157,6 +97,22 @@ function writeFallbackManuals(
  */
 export function computeHash(content: string): string {
   return createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
+
+/**
+ * 同步 _lib 目录到 store 根目录。
+ *
+ * Skills 可能引用 `../../_lib/engine-client.ts`，
+ * 需要在 store 层级保持相同的相对路径结构。
+ */
+export function ensureStoreLib(storeRoot: string = DEFAULT_STORE_ROOT): void {
+  // _lib 位于 skills/ 目录下（store 的父目录）
+  const libSource = resolve(storeRoot, "../_lib");
+  const libTarget = join(storeRoot, "_lib");
+
+  if (existsSync(libSource) && !existsSync(libTarget)) {
+    cpSync(libSource, libTarget, { recursive: true });
+  }
 }
 
 /**
@@ -170,7 +126,7 @@ export function computeHash(content: string): string {
 export function installToStore(
   manifestContent: string,
   sourceDir?: string,
-  skillName?: string,
+  _skillName?: string,
   storeRoot: string = DEFAULT_STORE_ROOT,
 ): { hash: string; storePath: string } {
   const hash = computeHash(manifestContent);
@@ -181,18 +137,13 @@ export function installToStore(
       // Store contains the full package body so installed skills stay runnable
       // even after the source workspace changes.
       cpSync(sourceDir, storePath, { recursive: true });
+
+      // 同步 _lib 目录到 store 根目录（支持 ../../_lib 引用）
+      ensureStoreLib(storeRoot);
     } else {
       mkdirSync(storePath, { recursive: true });
     }
     writeFileSync(join(storePath, "manifest.yaml"), manifestContent);
-  }
-
-  normalizePackageManuals(storePath, sourceDir);
-  writeFallbackManuals(storePath, manifestContent, skillName);
-
-  // Backfill launcher even for stores created before the installed-command path existed.
-  if (sourceDir && skillName && !existsSync(join(storePath, skillName))) {
-    writeLauncher(storePath, skillName);
   }
 
   return { hash, storePath };

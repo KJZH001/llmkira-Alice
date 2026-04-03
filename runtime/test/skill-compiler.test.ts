@@ -10,7 +10,9 @@ import {
   mkdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -25,12 +27,10 @@ import { ManifestSchema, type SkillManifest } from "../src/skills/manifest.js";
 import {
   buildAliceCommandPath,
   buildAliceContainerCommandPath,
-  buildAliceContainerManPath,
-  buildAliceManPath,
   buildInstalledSkillContainerEnv,
   buildInstalledSkillEnv,
+  ensureAllArtifacts,
   exportInstalledSkillArtifacts,
-  getAliceManDir,
   getAliceStoreRoot,
   getAliceSystemBinDir,
   loadRegistry,
@@ -197,8 +197,6 @@ describe("content-addressed store", () => {
 
     expect(existsSync(resolve(tmpStore, hash, "bin", "weather.ts"))).toBe(true);
     expect(existsSync(resolve(tmpStore, hash, "weather"))).toBe(true);
-    expect(existsSync(resolve(tmpStore, hash, "share", "man", "txt", "weather.txt"))).toBe(true);
-    expect(existsSync(resolve(tmpStore, hash, "share", "man", "man1", "weather.1"))).toBe(true);
 
     try {
       rmSync(tmpStore, { recursive: true });
@@ -220,71 +218,6 @@ describe("content-addressed store", () => {
     expect(existsSync(resolve(tmpStore, hash, "weather"))).toBe(true);
 
     try {
-      rmSync(tmpStore, { recursive: true });
-    } catch {
-      /* ignore */
-    }
-  });
-
-  it("backfills generated manuals for an existing store entry", () => {
-    const raw = readFileSync(WEATHER_MANIFEST_PATH, "utf-8");
-    const tmpStore = resolve(import.meta.dirname, ".test-store-manual-backfill");
-    const sourceDir = resolve(import.meta.dirname, "../skills/weather");
-
-    const { hash } = installToStore(raw, sourceDir, "weather", tmpStore);
-    rmSync(resolve(tmpStore, hash, "share"), { recursive: true, force: true });
-
-    installToStore(raw, sourceDir, "weather", tmpStore);
-
-    expect(existsSync(resolve(tmpStore, hash, "share", "man", "txt", "weather.txt"))).toBe(true);
-    expect(existsSync(resolve(tmpStore, hash, "share", "man", "man1", "weather.1"))).toBe(true);
-
-    try {
-      rmSync(tmpStore, { recursive: true });
-    } catch {
-      /* ignore */
-    }
-  });
-
-  it("preserves package-provided manuals and does not overwrite them with fallback text", () => {
-    const tmpSource = resolve(import.meta.dirname, ".test-skill-with-man");
-    const tmpStore = resolve(import.meta.dirname, ".test-store-package-man");
-    mkdirSync(resolve(tmpSource, "bin"), { recursive: true });
-    mkdirSync(resolve(tmpSource, "man", "txt"), { recursive: true });
-    mkdirSync(resolve(tmpSource, "man", "man1"), { recursive: true });
-
-    const manifest = [
-      "name: custom-man",
-      'version: "1.0.0"',
-      'description: "fallback description"',
-      "actions:",
-      "  - name: use_custom_man",
-      '    whenToUse: "fallback when to use"',
-      '    description: ["fallback action"]',
-    ].join("\n");
-
-    writeFileSync(resolve(tmpSource, "manifest.yaml"), manifest);
-    writeFileSync(resolve(tmpSource, "bin", "custom-man.ts"), "console.log('ok')\n");
-    writeFileSync(
-      resolve(tmpSource, "man", "txt", "custom-man.txt"),
-      "custom-man - package supplied txt manual\n",
-    );
-    writeFileSync(
-      resolve(tmpSource, "man", "man1", "custom-man.1"),
-      ".TH CUSTOM-MAN 1\n.SH NAME\ncustom-man \\- package supplied man page\n",
-    );
-
-    const { hash } = installToStore(manifest, tmpSource, "custom-man", tmpStore);
-
-    expect(
-      readFileSync(resolve(tmpStore, hash, "share", "man", "txt", "custom-man.txt"), "utf-8"),
-    ).toContain("package supplied txt manual");
-    expect(
-      readFileSync(resolve(tmpStore, hash, "share", "man", "man1", "custom-man.1"), "utf-8"),
-    ).toContain("package supplied man page");
-
-    try {
-      rmSync(tmpSource, { recursive: true });
       rmSync(tmpStore, { recursive: true });
     } catch {
       /* ignore */
@@ -337,9 +270,6 @@ describe("registry", () => {
 
     expect(env.PATH.startsWith(getAliceSystemBinDir())).toBe(true);
     expect(env.PATH).not.toContain("/tmp/skills/store/abc123");
-    expect(env.MANPATH).toContain(getAliceManDir());
-    expect(env.ALICE_MANPATH).toBe(getAliceManDir());
-    expect(env.ALICE_MAN_ROOT).toBe(getAliceManDir());
     expect(env.ALICE_SYSTEM_BIN_DIR).toBe(getAliceSystemBinDir());
     expect(env.ALICE_STORE_ROOT).toBe(getAliceStoreRoot());
     expect(env.ALICE_SKILL).toBe("weather");
@@ -351,23 +281,13 @@ describe("registry", () => {
       skillName: "weather",
       extraEnv: { FOO: "bar" },
       binDir: "/opt/alice/bin",
-      manRoot: "/opt/alice/share/man",
-      storeRoot: "/opt/alice/store",
     });
 
     expect(env.PATH).toBe(buildAliceContainerCommandPath("/opt/alice/bin"));
     expect(env.PATH).not.toContain(getAliceSystemBinDir());
-    expect(env.MANPATH).toBe(buildAliceContainerManPath("/opt/alice/share/man"));
-    expect(env.ALICE_MANPATH).toBe("/opt/alice/share/man");
     expect(env.ALICE_SYSTEM_BIN_DIR).toBe("/opt/alice/bin");
-    expect(env.ALICE_STORE_ROOT).toBe("/opt/alice/store");
     expect(env.ALICE_SKILL).toBe("weather");
     expect(env.FOO).toBe("bar");
-  });
-
-  it("buildAliceManPath prepends Alice man root", () => {
-    const manPath = buildAliceManPath();
-    expect(manPath.startsWith(getAliceManDir())).toBe(true);
   });
 
   it("buildAliceCommandPath uses the exported system bin as the first command root", () => {
@@ -376,40 +296,28 @@ describe("registry", () => {
     expect(path).not.toContain("/tmp/skills/store/abc123");
   });
 
-  it("exports installed skill command and manuals into Alice roots", () => {
+  it("exports installed skill command into Alice bin", () => {
     const tmpRoot = resolve(import.meta.dirname, ".test-exported-roots");
     const skillDir = resolve(tmpRoot, "store", "hash-weather");
     const binDir = resolve(tmpRoot, "bin");
-    const manDir = resolve(tmpRoot, "man");
-    mkdirSync(resolve(skillDir, "share", "man", "txt"), { recursive: true });
-    mkdirSync(resolve(skillDir, "share", "man", "man1"), { recursive: true });
+    mkdirSync(skillDir, { recursive: true });
     mkdirSync(binDir, { recursive: true });
-    mkdirSync(manDir, { recursive: true });
     writeFileSync(resolve(skillDir, "weather"), "#!/usr/bin/env sh\n");
-    writeFileSync(
-      resolve(skillDir, "share", "man", "txt", "weather.txt"),
-      "weather - txt manual\n",
-    );
-    writeFileSync(resolve(skillDir, "share", "man", "man1", "weather.1"), ".TH WEATHER 1\n");
 
     try {
       const exported = exportInstalledSkillArtifacts(
         {
           name: "weather",
+          hash: "test-hash-123",
           storePath: skillDir,
           commandPath: resolve(skillDir, "weather"),
         },
-        {
-          binDir,
-          manRoot: manDir,
-        },
+        { binDir },
       );
 
       expect(existsSync(exported.commandPath)).toBe(true);
-      expect(existsSync(resolve(manDir, "txt", "weather.txt"))).toBe(true);
-      expect(existsSync(resolve(manDir, "man1", "weather.1"))).toBe(true);
 
-      removeExportedSkillArtifacts("weather", { binDir, manRoot: manDir });
+      removeExportedSkillArtifacts("weather", { binDir });
       expect(existsSync(exported.commandPath)).toBe(false);
     } finally {
       try {
@@ -425,7 +333,6 @@ describe("registry", () => {
     const oldSkillDir = resolve(tmpRoot, "store", "hash-old");
     const newSkillDir = resolve(tmpRoot, "store", "hash-new");
     const binDir = resolve(tmpRoot, "bin");
-    const manDir = resolve(tmpRoot, "man");
 
     mkdirSync(oldSkillDir, { recursive: true });
     mkdirSync(newSkillDir, { recursive: true });
@@ -436,22 +343,27 @@ describe("registry", () => {
       exportInstalledSkillArtifacts(
         {
           name: "weather",
+          hash: "hash-old",
           storePath: oldSkillDir,
           commandPath: resolve(oldSkillDir, "weather"),
         },
-        { binDir, manRoot: manDir },
+        { binDir, storeRoot: resolve(tmpRoot, "store") },
       );
-      expect(readlinkSync(resolve(binDir, "weather"))).toBe(resolve(oldSkillDir, "weather"));
+      // 验证 symlink 解析后指向正确的目标
+      const oldResolved = resolve(binDir, readlinkSync(resolve(binDir, "weather")));
+      expect(oldResolved).toBe(resolve(oldSkillDir, "weather"));
 
       exportInstalledSkillArtifacts(
         {
           name: "weather",
+          hash: "hash-new",
           storePath: newSkillDir,
           commandPath: resolve(newSkillDir, "weather"),
         },
-        { binDir, manRoot: manDir },
+        { binDir, storeRoot: resolve(tmpRoot, "store") },
       );
-      expect(readlinkSync(resolve(binDir, "weather"))).toBe(resolve(newSkillDir, "weather"));
+      const newResolved = resolve(binDir, readlinkSync(resolve(binDir, "weather")));
+      expect(newResolved).toBe(resolve(newSkillDir, "weather"));
     } finally {
       try {
         rmSync(tmpRoot, { recursive: true });
@@ -461,60 +373,47 @@ describe("registry", () => {
     }
   });
 
-  it("atomically switches exported manual symlinks when a skill is re-exported", () => {
-    const tmpRoot = resolve(import.meta.dirname, ".test-exported-man-switch");
-    const oldSkillDir = resolve(tmpRoot, "store", "hash-old");
-    const newSkillDir = resolve(tmpRoot, "store", "hash-new");
+  it("ensureAllArtifacts detects and fixes broken symlinks", () => {
+    const tmpRoot = resolve(import.meta.dirname, ".test-ensure-artifacts");
+    const storeRoot = resolve(tmpRoot, "store");
     const binDir = resolve(tmpRoot, "bin");
-    const manDir = resolve(tmpRoot, "man");
+    const registryPath = resolve(tmpRoot, "registry.json");
 
-    mkdirSync(resolve(oldSkillDir, "share", "man", "txt"), { recursive: true });
-    mkdirSync(resolve(oldSkillDir, "share", "man", "man1"), { recursive: true });
-    mkdirSync(resolve(newSkillDir, "share", "man", "txt"), { recursive: true });
-    mkdirSync(resolve(newSkillDir, "share", "man", "man1"), { recursive: true });
-    writeFileSync(resolve(oldSkillDir, "weather"), "#!/usr/bin/env sh\necho old\n");
-    writeFileSync(resolve(newSkillDir, "weather"), "#!/usr/bin/env sh\necho new\n");
-    writeFileSync(resolve(oldSkillDir, "share", "man", "txt", "weather.txt"), "old txt manual\n");
+    // 创建有效的 skill
+    const skillDir = resolve(storeRoot, "hash-valid", "demo");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(resolve(skillDir, "demo"), "#!/usr/bin/env sh\necho demo\n");
+
+    // 创建 registry
     writeFileSync(
-      resolve(oldSkillDir, "share", "man", "man1", "weather.1"),
-      ".TH WEATHER 1\nold\n",
+      registryPath,
+      JSON.stringify({
+        demo: {
+          name: "demo",
+          version: "1.0.0",
+          hash: "hash-valid",
+          storePath: skillDir,
+          commandPath: resolve(skillDir, "demo"),
+        },
+      }),
     );
-    writeFileSync(resolve(newSkillDir, "share", "man", "txt", "weather.txt"), "new txt manual\n");
-    writeFileSync(
-      resolve(newSkillDir, "share", "man", "man1", "weather.1"),
-      ".TH WEATHER 1\nnew\n",
-    );
+
+    // 创建 broken symlink（指向不存在的目标）
+    mkdirSync(binDir, { recursive: true });
+    symlinkSync("../store/hash-wrong/demo", resolve(binDir, "demo.tmp"));
+    renameSync(resolve(binDir, "demo.tmp"), resolve(binDir, "demo"));
 
     try {
-      exportInstalledSkillArtifacts(
-        {
-          name: "weather",
-          storePath: oldSkillDir,
-          commandPath: resolve(oldSkillDir, "weather"),
-        },
-        { binDir, manRoot: manDir },
-      );
-      expect(readlinkSync(resolve(manDir, "txt", "weather.txt"))).toBe(
-        resolve(oldSkillDir, "share", "man", "txt", "weather.txt"),
-      );
-      expect(readlinkSync(resolve(manDir, "man1", "weather.1"))).toBe(
-        resolve(oldSkillDir, "share", "man", "man1", "weather.1"),
-      );
+      // 调用 ensureAllArtifacts（传入测试目录）
+      const result = ensureAllArtifacts({ registryPath, binDir, storeRoot });
 
-      exportInstalledSkillArtifacts(
-        {
-          name: "weather",
-          storePath: newSkillDir,
-          commandPath: resolve(newSkillDir, "weather"),
-        },
-        { binDir, manRoot: manDir },
-      );
-      expect(readlinkSync(resolve(manDir, "txt", "weather.txt"))).toBe(
-        resolve(newSkillDir, "share", "man", "txt", "weather.txt"),
-      );
-      expect(readlinkSync(resolve(manDir, "man1", "weather.1"))).toBe(
-        resolve(newSkillDir, "share", "man", "man1", "weather.1"),
-      );
+      // 应该检测到 broken 并修复
+      expect(result.fixed).toBe(1);
+      expect(existsSync(resolve(binDir, "demo"))).toBe(true);
+
+      // symlink 应该指向正确的 hash
+      const resolved = resolve(binDir, readlinkSync(resolve(binDir, "demo")));
+      expect(resolved).toBe(resolve(skillDir, "demo"));
     } finally {
       try {
         rmSync(tmpRoot, { recursive: true });

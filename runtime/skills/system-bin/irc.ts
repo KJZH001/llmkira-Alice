@@ -1,118 +1,142 @@
 /**
  * irc — IRC-native Telegram system client (CLI 入口)。
  *
- * citty 严格解析 → Engine API 调用 → 人类可读输出。
- * 成功的发送动作输出 action 控制行，shell-executor 可追踪已完成操作。
+ * ADR-238: citty 原生方案，符合 Unix 标准。
+ * - 所有参数由 citty 解析，不手动处理 rawArgs
+ * - 多词参数由 shell 引号处理，CLI 不宽容
+ * - 类型定义与运行时行为严格一致
  *
- * @see docs/adr/235-cli-human-readable-output.md
+ * @see docs/adr/238-citty-native-cli-redesign.md
  */
 
 import { defineCommand, runMain } from "citty";
+import { parseMsgId, resolveTarget } from "../../src/system/chat-client.ts";
+import { renderConfirm } from "../../src/system/cli-bridge.ts";
 import {
-  inOption,
-  parseMsgId,
-  rejectExtraArgs,
-  resolveTarget,
-  stripFlags,
-} from "../../src/system/chat-client.ts";
-import { engineGet, enginePost, engineQuery } from "../_lib/engine-client.ts";
-import {
-  extractJsonFlag,
-  renderConfirm,
-  renderHuman,
-  renderJson,
-  renderKeyValue,
-  truncate,
-} from "../../src/system/cli-bridge.ts";
+  joinCommand,
+  leaveCommand,
+  motdCommand,
+  reactCommand,
+  readCommand,
+  replyCommand,
+  sayCommand,
+  stickerCommand,
+  tailCommand,
+  threadsCommand,
+  voiceCommand,
+  whoisCommand,
+} from "../../src/system/cli-commands.ts";
+import { createRealContext } from "../../src/system/cli-io.ts";
+import { type CommandName, filterOutput, parseOutputMode } from "../../src/system/cli-json.ts";
+import type { CliContext } from "../../src/system/cli-types.ts";
+import { engineGet, enginePost } from "../_lib/engine-client.ts";
 
-const ACTION_PREFIX = "__ALICE_ACTION__:";
+// ── Shared Args Definitions ──
 
-// ── 工具函数 ──
+/** --in 选项：目标聊天。 */
+const inOption = {
+  type: "string" as const,
+  description: "Target chat (@ID or numeric). Omit to use current chat context.",
+};
 
-function die(msg: string): never {
-  process.stderr.write(`irc: ${msg}\n`);
-  process.exitCode = 1;
-  // eslint-disable-next-line unicorn/no-process-exit
-  process.exit(1);
+/** --json 选项：指定输出字段（逗号分隔）。无参数则输出全部字段。 */
+const jsonFlag = {
+  json: {
+    type: "string" as const,
+    description: "Output as JSON with specified fields (comma-separated). Omit for human-readable.",
+    valueHint: "fields",
+  },
+};
+
+// ── Command Result & Runner ──
+
+/** 命令执行结果。 */
+interface CommandResult {
+  action?: string;
+  output: string;
+  /** 原始结果对象（用于 JSON 字段过滤）。 */
+  rawResult?: unknown;
 }
 
-/** 输出结果：--json 模式输出 JSON，默认输出人类可读文本。 */
-function output(jsonMode: boolean, result: unknown, humanText: string): void {
-  console.log(jsonMode ? renderJson(result) : humanText);
+/** citty run 函数签名。 */
+type CittyRun<A = Record<string, unknown>> = (ctx: { args: A }) => Promise<void>;
+
+/**
+ * 创建命令执行器。
+ * ADR-239: --json 接受字段列表，验证 + 过滤输出。
+ */
+function makeRunner<A extends { json?: string }>(
+  command: CommandName,
+  handler: (ctx: CliContext, args: A) => Promise<CommandResult>,
+): CittyRun<A> {
+  return async (cittyCtx) => {
+    const ctx = createRealContext();
+    const { json } = cittyCtx.args;
+
+    // 解析输出模式
+    const mode = parseOutputMode(command, json);
+
+    // 执行命令
+    const result = await handler(ctx, cittyCtx.args);
+
+    // 输出
+    if (result.action) console.log(result.action);
+
+    switch (mode.type) {
+      case "human":
+        console.log(result.output);
+        break;
+      case "json": {
+        const filtered = filterOutput(result.rawResult as Record<string, unknown>, mode.fields);
+        console.log(JSON.stringify(filtered, null, 2));
+        break;
+      }
+    }
+  };
 }
 
-// ── Subcommands ──
+// ── Core Subcommands ──
 
 const say = defineCommand({
   meta: { name: "say", description: "Send a message" },
   args: {
+    ...jsonFlag,
     in: inOption,
     text: { type: "positional", description: "Message text", required: true },
+    "resolve-thread": {
+      type: "string",
+      description: "Thread ID to resolve after sending",
+    },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 1, "say");
-    const chatId = resolveTarget(args.in);
-    const text = args.text as string;
-    if (!text.trim()) die("say requires non-empty text");
-    const result = (await enginePost("/telegram/send", { chatId, text })) as {
-      msgId?: number;
-    } | null;
-    if (result?.msgId != null) {
-      console.log(`${ACTION_PREFIX}sent:chatId=${chatId}:msgId=${result.msgId}`);
-    }
-    output(json, result, renderConfirm("Sent", `"${truncate(text)}"`));
-  },
+  run: makeRunner("say", sayCommand),
 });
 
 const reply = defineCommand({
   meta: { name: "reply", description: "Reply to a message" },
   args: {
+    ...jsonFlag,
     in: inOption,
     msgId: { type: "positional", description: "Message ID to reply to", required: true },
     text: { type: "positional", description: "Reply text", required: true },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 2, "reply");
-    const chatId = resolveTarget(args.in);
-    const replyTo = parseMsgId(args.msgId as string);
-    const text = args.text as string;
-    if (!text.trim()) die("reply requires non-empty text");
-    const result = (await enginePost("/telegram/send", { chatId, text, replyTo })) as {
-      msgId?: number;
-    } | null;
-    if (result?.msgId != null) {
-      console.log(`${ACTION_PREFIX}sent:chatId=${chatId}:msgId=${result.msgId}`);
-    }
-    output(json, result, renderConfirm("Replied to", `#${replyTo}: "${truncate(text)}"`));
-  },
+  run: makeRunner("reply", replyCommand),
 });
 
 const react = defineCommand({
   meta: { name: "react", description: "React to a message" },
   args: {
+    ...jsonFlag,
     in: inOption,
     msgId: { type: "positional", description: "Message ID to react to", required: true },
     emoji: { type: "positional", description: "Emoji", required: true },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 2, "react");
-    const chatId = resolveTarget(args.in);
-    const msgId = parseMsgId(args.msgId as string);
-    const emoji = args.emoji as string;
-    const result = await enginePost("/telegram/react", { chatId, msgId, emoji });
-    output(json, result, renderConfirm(`Reacted ${emoji} to`, `#${msgId}`));
-  },
+  run: makeRunner("react", reactCommand),
 });
 
 const sticker = defineCommand({
   meta: { name: "sticker", description: "Send a sticker by keyword" },
   args: {
+    ...jsonFlag,
     in: inOption,
     keyword: {
       type: "positional",
@@ -120,240 +144,134 @@ const sticker = defineCommand({
       required: true,
     },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 1, "sticker");
-    const chatId = resolveTarget(args.in);
-    const keyword = args.keyword as string;
-    const result = (await enginePost("/telegram/sticker", { chatId, sticker: keyword })) as {
-      msgId?: number;
-    } | null;
-    if (result?.msgId != null) {
-      console.log(`${ACTION_PREFIX}sticker:chatId=${chatId}:msgId=${result.msgId}`);
-    }
-    output(json, result, renderConfirm("Sent sticker", keyword));
-  },
+  run: makeRunner("sticker", stickerCommand),
 });
 
 const voice = defineCommand({
   meta: { name: "voice", description: "Send a voice message (text-to-speech)" },
   args: {
+    ...jsonFlag,
     in: inOption,
     emotion: { type: "string", description: "Emotion: happy, sad, angry, calm, whisper, ..." },
     ref: { type: "string", description: "Message ID to reply to" },
     text: { type: "positional", description: "Text to speak", required: true },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in", "--emotion", "--ref"]);
-    rejectExtraArgs(positionals, 1, "voice");
-    const chatId = resolveTarget(args.in);
-    const text = (args.text as string).trim();
-    if (!text) die("voice requires non-empty text");
-    const body: Record<string, unknown> = { chatId, text };
-    if (args.emotion) body.emotion = args.emotion;
-    if (args.ref) body.replyTo = parseMsgId(args.ref as string);
-    const result = (await enginePost("/telegram/voice", body)) as {
-      msgId?: number;
-    } | null;
-    if (result?.msgId != null) {
-      console.log(`${ACTION_PREFIX}voice:chatId=${chatId}:msgId=${result.msgId}`);
-    }
-    output(json, result, renderConfirm("Sent voice", `"${truncate(text)}"`));
-  },
+  run: makeRunner("voice", voiceCommand),
 });
 
 const read = defineCommand({
   meta: { name: "read", description: "Mark chat as read" },
-  args: { in: inOption },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 0, "read");
-    const chatId = resolveTarget(args.in);
-    const result = await enginePost("/telegram/read", { chatId });
-    output(json, result, renderConfirm("Marked as read"));
+  args: {
+    ...jsonFlag,
+    in: inOption,
   },
+  run: makeRunner("read", readCommand),
 });
 
 const tail = defineCommand({
   meta: { name: "tail", description: "Show recent messages" },
   args: {
+    ...jsonFlag,
     in: inOption,
     count: { type: "positional", description: "Number of messages", default: "20" },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 1, "tail");
-    const chatId = resolveTarget(args.in);
-    const count = Number(args.count);
-    if (!Number.isFinite(count)) die("tail count must be a number");
-    const result = await engineGet(`/chat/${chatId}/tail?limit=${count}`);
-    // ADR-221: 标注来源 chatId，防止 LLM 跨 round 时搞混群组 ID
-    const isRemote = args.in != null;
-    if (isRemote) {
-      console.log(`[tail @${chatId}]`);
-    }
-    if (json) {
-      console.log(renderJson(result));
-    } else {
-      // tail 返回的是消息数组，格式化为编号列表
-      const messages = Array.isArray(result) ? result : [];
-      if (messages.length === 0) {
-        console.log("(no messages)");
-      } else {
-        for (let i = 0; i < messages.length; i++) {
-          const m = messages[i] as { sender?: string; text?: string; id?: number };
-          const sender = m.sender ?? "?";
-          const text = m.text ?? "";
-          const prefix = m.id != null ? `(#${m.id}) ` : "";
-          console.log(`${i + 1}. ${prefix}${sender}: "${truncate(text, 80)}"`);
-        }
-      }
-    }
-  },
+  run: makeRunner("tail", tailCommand),
 });
-
-// ── whois: 统一查人/查房间（IRC /whois）──
-
-/** 从 graph 属性响应中提取 value。 */
-function gval(res: unknown): unknown {
-  return (res as { value?: unknown } | null)?.value ?? null;
-}
 
 const whois = defineCommand({
   meta: { name: "whois", description: "Look up a contact or the current chat room" },
   args: {
+    ...jsonFlag,
     in: inOption,
-    target: { type: "positional", description: "Contact @ID (omit for room info)", default: "" },
+    target: {
+      type: "positional",
+      description: "Contact name or @ID (omit for room info)",
+      multiple: true,
+    },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 1, "whois");
-    const target = (args.target as string | undefined)?.trim() || undefined;
-
-    if (target) {
-      // whois @ID → 联系人画像（/query/contact_profile）
-      const stripped = target.startsWith("@") || target.startsWith("~") ? target.slice(1) : target;
-      const contactId = `contact:${stripped}`;
-      const result = await engineQuery("/query/contact_profile", { contactId });
-      output(json, result, renderHuman(result));
-    } else {
-      // whois（无参数）→ 聊天室信息（原 irc who）
-      const chatId = resolveTarget(args.in);
-      const [name, chatType, topic, unread, pendingDirected, aliceRole] = await Promise.all([
-        engineGet(`/graph/channel:${chatId}/display_name`),
-        engineGet(`/graph/channel:${chatId}/chat_type`),
-        engineGet(`/graph/channel:${chatId}/topic`),
-        engineGet(`/graph/channel:${chatId}/unread`),
-        engineGet(`/graph/channel:${chatId}/pending_directed`),
-        engineGet(`/graph/channel:${chatId}/alice_role`),
-      ]);
-      const data = {
-        chatId,
-        name: gval(name),
-        chatType: gval(chatType),
-        topic: gval(topic),
-        unread: gval(unread) ?? 0,
-        pendingDirected: gval(pendingDirected) ?? 0,
-        role: gval(aliceRole),
-      };
-      if (json) {
-        console.log(renderJson(data));
-      } else {
-        console.log(
-          renderKeyValue([
-            ["Channel", data.name ?? chatId],
-            ["Type", data.chatType],
-            ["Topic", data.topic ? `"${data.topic}"` : null],
-            ["Unread", data.unread],
-            ["Pending directed", data.pendingDirected],
-            ["Your role", data.role],
-          ]),
-        );
-      }
-    }
-  },
+  run: makeRunner("whois", whoisCommand),
 });
-
-// ── motd: 聊天室氛围（IRC /motd）──
 
 const motd = defineCommand({
   meta: { name: "motd", description: "Show chat mood and atmosphere" },
-  args: { in: inOption },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 0, "motd");
-    const chatId = resolveTarget(args.in);
-    const result = await engineQuery("/query/chat_mood", { chatId: `channel:${chatId}` });
-    output(json, result, renderHuman(result));
+  args: {
+    ...jsonFlag,
+    in: inOption,
   },
+  run: makeRunner("motd", motdCommand),
 });
-
-// ── threads: 未结话题（Discord/Slack 风格）──
 
 const threads = defineCommand({
   meta: { name: "threads", description: "Show open discussion threads" },
-  async run({ rawArgs }) {
-    const { json } = extractJsonFlag(rawArgs);
-    const result = await engineQuery("/query/open_topics", {});
-    output(json, result, renderHuman(result));
-  },
-});
-
-const topicCmd = defineCommand({
-  meta: { name: "topic", description: "Show chat topic" },
-  args: { in: inOption },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 0, "topic");
-    const chatId = resolveTarget(args.in);
-    const topicResult = await engineGet(`/graph/channel:${chatId}/topic`);
-    const topicValue = (topicResult as { value?: unknown } | null)?.value ?? null;
-    output(json, { chatId, topic: topicValue }, topicValue ? `Topic: "${topicValue}"` : "(no topic)");
-  },
+  args: jsonFlag,
+  run: makeRunner("threads", threadsCommand),
 });
 
 const join = defineCommand({
   meta: { name: "join", description: "Join a chat" },
   args: {
+    ...jsonFlag,
     target: {
       type: "positional",
       description: "Chat ID, @username, or invite link",
       required: true,
     },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    rejectExtraArgs(cleaned, 1, "join");
-    const chatIdOrLink = (args.target as string).trim();
-    if (!chatIdOrLink) die("join requires a target");
-    const result = await enginePost("/telegram/join", { chatIdOrLink });
-    output(json, result, renderConfirm("Joined", chatIdOrLink));
-  },
+  run: makeRunner("join", joinCommand),
 });
 
 const leave = defineCommand({
   meta: { name: "leave", description: "Leave current chat" },
-  args: { in: inOption },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--in"]);
-    rejectExtraArgs(positionals, 0, "leave");
-    const chatId = resolveTarget(args.in);
-    const result = await enginePost("/telegram/leave", { chatId });
-    output(json, result, renderConfirm("Left chat"));
+  args: {
+    ...jsonFlag,
+    in: inOption,
+  },
+  run: makeRunner("leave", leaveCommand),
+});
+
+// ── Additional Commands (inline implementations) ──
+
+const ACTION_PREFIX = "__ALICE_ACTION__:";
+
+/** 从 graph 响应中提取 value。 */
+function gval(res: unknown): unknown {
+  return (res as { value?: unknown } | null)?.value ?? null;
+}
+
+/** 输出处理辅助函数（用于内联命令）。 */
+function outputMode(json: string | undefined, rawResult: unknown, humanText: string): void {
+  const mode = parseOutputMode("topic", json); // topic 作为 fallback
+  switch (mode.type) {
+    case "human":
+      console.log(humanText);
+      break;
+    case "json": {
+      const filtered = filterOutput(rawResult as Record<string, unknown>, mode.fields);
+      console.log(JSON.stringify(filtered, null, 2));
+      break;
+    }
+  }
+}
+
+const topic = defineCommand({
+  meta: { name: "topic", description: "Show chat topic" },
+  args: {
+    ...jsonFlag,
+    in: inOption,
+  },
+  async run({ args }) {
+    const chatId = await resolveTarget(args.in as string | undefined);
+    const topicResult = await engineGet(`/graph/channel:${chatId}/topic`);
+    const topicValue = gval(topicResult);
+    const rawResult = { chatId, topic: topicValue };
+    outputMode(args.json, rawResult, topicValue ? `Topic: "${topicValue}"` : "(no topic)");
   },
 });
 
 const download = defineCommand({
   meta: { name: "download", description: "Download a file attachment from a message" },
   args: {
+    ...jsonFlag,
     in: inOption,
     ref: { type: "string", description: "Message ID containing the attachment", required: true },
     output: {
@@ -362,57 +280,52 @@ const download = defineCommand({
       required: true,
     },
   },
-  async run({ args, rawArgs }) {
-    const { json } = extractJsonFlag(rawArgs);
-    const chatId = resolveTarget(args.in);
+  async run({ args }) {
+    const chatId = await resolveTarget(args.in as string | undefined);
     const msgId = parseMsgId(args.ref as string);
     const outputPath = (args.output as string).trim();
-    if (!outputPath) die("download requires --output path");
+
     const result = (await enginePost("/telegram/download", {
       chatId,
       msgId,
       output: outputPath,
-    })) as {
-      path?: string;
-      mime?: string;
-      size?: number;
-    } | null;
+    })) as { path?: string; mime?: string; size?: number } | null;
+
     if (result?.path) {
       console.log(`${ACTION_PREFIX}downloaded:chatId=${chatId}:msgId=${msgId}:path=${result.path}`);
     }
+
     const detail = result?.path ?? outputPath;
     const size = result?.size != null ? ` (${result.size} bytes)` : "";
-    output(json, result, renderConfirm("Downloaded", `${detail}${size}`));
+    outputMode(args.json, result, renderConfirm("Downloaded", `${detail}${size}`));
   },
 });
 
 const sendFile = defineCommand({
   meta: { name: "send-file", description: "Send a local file to a chat" },
   args: {
+    ...jsonFlag,
     in: inOption,
     path: { type: "string", description: "File path (must be under $ALICE_HOME)", required: true },
     caption: { type: "string", description: "Optional caption" },
     ref: { type: "string", description: "Message ID to reply to" },
   },
-  async run({ args, rawArgs }) {
-    const { json } = extractJsonFlag(rawArgs);
-    const chatId = resolveTarget(args.in);
+  async run({ args }) {
+    const chatId = await resolveTarget(args.in as string | undefined);
     const filePath = (args.path as string).trim();
-    if (!filePath) die("send-file requires --path");
+
     const body: Record<string, unknown> = { chatId, path: filePath };
     if (args.caption) body.caption = args.caption;
     if (args.ref) body.replyTo = parseMsgId(args.ref as string);
-    const result = (await enginePost("/telegram/upload", body)) as {
-      msgId?: number;
-    } | null;
+
+    const result = (await enginePost("/telegram/upload", body)) as { msgId?: number } | null;
+
     if (result?.msgId != null) {
       console.log(`${ACTION_PREFIX}sent-file:chatId=${chatId}:path=${filePath}`);
     }
-    output(json, result, renderConfirm("Sent file", filePath));
+    outputMode(args.json, result, renderConfirm("Sent file", filePath));
   },
 });
-
-// ── ADR-206 W8: 跨聊天转发 + 可选附加评论 ──
 
 const forward = defineCommand({
   meta: {
@@ -420,14 +333,15 @@ const forward = defineCommand({
     description: "Forward a message to another chat (with optional comment)",
   },
   args: {
+    ...jsonFlag,
     from: {
-      type: "string" as const,
+      type: "string",
       description: "Source chat (@ID or numeric)",
       required: true,
     },
     ref: { type: "string", description: "Message ID to forward", required: true },
     to: {
-      type: "string" as const,
+      type: "string",
       description: "Destination chat (@ID or numeric). Omit to use current chat context.",
     },
     text: {
@@ -436,20 +350,19 @@ const forward = defineCommand({
       default: "",
     },
   },
-  async run({ args, rawArgs }) {
-    const { json, args: cleaned } = extractJsonFlag(rawArgs);
-    const positionals = stripFlags(cleaned, ["--from", "--ref", "--to"]);
-    rejectExtraArgs(positionals, 1, "forward");
-    const fromChatId = resolveTarget(args.from);
+  async run({ args }) {
+    const fromChatId = await resolveTarget(args.from as string);
     const msgId = parseMsgId(args.ref as string);
-    const toChatId = resolveTarget(args.to);
+    const toChatId = await resolveTarget(args.to as string | undefined);
     const comment = (args.text as string | undefined)?.trim() || undefined;
+
     const result = (await enginePost("/telegram/forward", {
       fromChatId,
       msgId,
       toChatId,
       ...(comment && { comment }),
     })) as { forwardedMsgId?: number; commentMsgId?: number } | null;
+
     if (result?.forwardedMsgId != null) {
       console.log(
         `${ACTION_PREFIX}forwarded:from=${fromChatId}:to=${toChatId}:msgId=${result.forwardedMsgId}`,
@@ -458,11 +371,11 @@ const forward = defineCommand({
     if (result?.commentMsgId != null) {
       console.log(`${ACTION_PREFIX}sent:chatId=${toChatId}:msgId=${result.commentMsgId}`);
     }
-    output(json, result, renderConfirm("Forwarded", `#${msgId} → @${toChatId}`));
+    outputMode(args.json, result, renderConfirm("Forwarded", `#${msgId} → @${toChatId}`));
   },
 });
 
-// ── Main ──
+// ── Main Command ──
 
 const main = defineCommand({
   meta: {
@@ -480,7 +393,7 @@ const main = defineCommand({
     whois,
     motd,
     threads,
-    topic: topicCmd,
+    topic,
     join,
     leave,
     download,

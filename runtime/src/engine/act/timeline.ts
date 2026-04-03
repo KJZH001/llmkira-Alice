@@ -440,11 +440,15 @@ const MONTH_NAMES = [
 ];
 
 /** 墙钟时间格式化 — h:MM AM/PM，LLM 直觉友好。 */
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString("en-US", {
+function formatTime(ts: number, timezoneOffset?: number): string {
+  // ADR-34: 使用配置的时区，而非系统时区
+  // 将 UTC 时间戳偏移到用户本地时间，然后用 UTC 时区显示
+  const adjustedTs = timezoneOffset != null ? ts + timezoneOffset * 60 * 60 * 1000 : ts;
+  return new Date(adjustedTs).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: "UTC",
   });
 }
 
@@ -587,12 +591,16 @@ export function buildTimeline(
  *
  * @see docs/adr/141-prompt-style-spec.md — 零缩进规范
  */
-export function renderTimeline(entries: TimelineEntry[], nowMs?: number): string[] {
+export function renderTimeline(
+  entries: TimelineEntry[],
+  nowMs?: number,
+  timezoneOffset?: number,
+): string[] {
   return entries.map((e) => {
     if (e.kind === "gap" || e.kind === "context") {
       return e.rendered;
     }
-    const time = formatTime(e.ts);
+    const time = formatTime(e.ts, timezoneOffset);
     // ≥30min 距今才追加相对标签——近期消息不加噪声
     if (nowMs != null && nowMs - e.ts >= GAP_THRESHOLD_MS) {
       return `[${time}, ${relativeLabel(nowMs - e.ts)}] ${e.rendered}`;

@@ -2,7 +2,7 @@
  * ADR-226: 话题自动聚类 — 核心 + Mod 测试。
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClusteringResult } from "../src/engine/clustering.js";
 import { resetReflectClient } from "../src/engine/clustering.js";
 

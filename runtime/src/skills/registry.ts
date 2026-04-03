@@ -9,15 +9,16 @@ import {
   constants,
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { delimiter, dirname, resolve } from "node:path";
+import { compileSkillExecutable, getAliceStoreRoot } from "./store.js";
+
+// 重新导出供其他模块使用
+export { getAliceStoreRoot } from "./store.js";
 
 /** 默认注册表路径。 */
 const DEFAULT_REGISTRY_PATH = resolve(import.meta.dirname ?? ".", "../../skills/registry.json");
@@ -28,15 +29,9 @@ const DEFAULT_REGISTRY_PATH = resolve(import.meta.dirname ?? ".", "../../skills/
  * In a protected runner/container they can be rebound to system-style directories
  * like /opt/alice/bin and /opt/alice/share/man via environment variables.
  */
-const DEFAULT_STORE_ROOT = process.env.ALICE_STORE_ROOT
-  ? resolve(process.env.ALICE_STORE_ROOT)
-  : resolve(import.meta.dirname ?? ".", "../../skills/store");
 const DEFAULT_SYSTEM_BIN = process.env.ALICE_SYSTEM_BIN_DIR
   ? resolve(process.env.ALICE_SYSTEM_BIN_DIR)
   : resolve(import.meta.dirname ?? ".", "../../dist/bin");
-const DEFAULT_MAN_ROOT = process.env.ALICE_MAN_ROOT
-  ? resolve(process.env.ALICE_MAN_ROOT)
-  : resolve(import.meta.dirname ?? ".", "../../skills/man");
 const CONTAINER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /** 注册表条目。 */
@@ -164,7 +159,7 @@ export function removeEntry(name: string, registryPath?: string): void {
  * 解析已安装 Skill 的目录。
  */
 export function resolveInstalledSkillDir(entry: RegistryEntry): string {
-  return entry.storePath ?? resolve(DEFAULT_STORE_ROOT, entry.hash);
+  return entry.storePath ?? resolve(getAliceStoreRoot(), entry.hash);
 }
 
 /**
@@ -186,16 +181,6 @@ export function getAliceSystemBinDir(): string {
 /** Public command exposure root for installed commands. */
 export function getAliceBinDir(): string {
   return DEFAULT_SYSTEM_BIN;
-}
-
-/** Alice store root directory. */
-export function getAliceStoreRoot(): string {
-  return DEFAULT_STORE_ROOT;
-}
-
-/** Alice man 手册根目录。 */
-export function getAliceManDir(): string {
-  return DEFAULT_MAN_ROOT;
 }
 
 /**
@@ -253,17 +238,6 @@ export function buildAliceContainerCommandPath(binDir: string = getAliceBinDir()
   return [binDir, CONTAINER_SYSTEM_PATH].join(delimiter);
 }
 
-/** Build MANPATH so host `man` can find Alice command manuals. */
-export function buildAliceManPath(): string {
-  const parts = [getAliceManDir(), process.env.MANPATH].filter(Boolean);
-  return parts.join(delimiter);
-}
-
-/** Container MANPATH should point only at mounted Alice manuals. */
-export function buildAliceContainerManPath(manRoot: string = getAliceManDir()): string {
-  return manRoot;
-}
-
 /**
  * 为 Skill 进程构建运行时环境。
  *
@@ -277,9 +251,6 @@ export function buildInstalledSkillEnv(options?: {
   return {
     ...(options?.extraEnv ?? {}),
     PATH: buildAliceCommandPath(),
-    MANPATH: buildAliceManPath(),
-    ALICE_MANPATH: getAliceManDir(),
-    ALICE_MAN_ROOT: getAliceManDir(),
     ALICE_SYSTEM_BIN_DIR: getAliceSystemBinDir(),
     ALICE_STORE_ROOT: getAliceStoreRoot(),
     ...(options?.skillName ? { ALICE_SKILL: options.skillName } : {}),
@@ -290,21 +261,13 @@ export function buildInstalledSkillContainerEnv(options?: {
   skillName?: string;
   extraEnv?: Record<string, string>;
   binDir?: string;
-  manRoot?: string;
-  storeRoot?: string;
 }): Record<string, string> {
   const binDir = options?.binDir ?? getAliceBinDir();
-  const manRoot = options?.manRoot ?? getAliceManDir();
-  const storeRoot = options?.storeRoot ?? getAliceStoreRoot();
 
   return {
     ...(options?.extraEnv ?? {}),
     PATH: buildAliceContainerCommandPath(binDir),
-    MANPATH: buildAliceContainerManPath(manRoot),
-    ALICE_MANPATH: manRoot,
-    ALICE_MAN_ROOT: manRoot,
     ALICE_SYSTEM_BIN_DIR: binDir,
-    ALICE_STORE_ROOT: storeRoot,
     ...(options?.skillName ? { ALICE_SKILL: options.skillName } : {}),
   };
 }
@@ -318,96 +281,69 @@ export function isExecutableFile(path: string): boolean {
   }
 }
 
-function replaceSymlinkAtomically(targetPath: string, sourcePath: string): void {
-  const parentDir = dirname(targetPath);
-  mkdirSync(parentDir, { recursive: true });
-
-  const tempPath = resolve(
-    parentDir,
-    `.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.${entryBaseName(targetPath)}.tmp`,
-  );
-
-  rmSync(tempPath, { force: true });
-  symlinkSync(sourcePath, tempPath);
-  renameSync(tempPath, targetPath);
-}
-
-function entryBaseName(path: string): string {
-  const segments = path.split(/[\\/]/);
-  return segments[segments.length - 1] || "link";
-}
-
 export function exportInstalledSkillArtifacts(
-  entry: Pick<RegistryEntry, "name" | "storePath" | "commandPath">,
-  options?: { binDir?: string; manRoot?: string },
+  entry: Pick<RegistryEntry, "name" | "hash" | "storePath" | "commandPath">,
+  options?: { binDir?: string; storeRoot?: string },
 ): { commandPath: string } {
-  const skillDir = entry.storePath ?? resolve(DEFAULT_STORE_ROOT, entry.name);
-  const sourceCommand = entry.commandPath ?? resolve(skillDir, entry.name);
+  const storeRoot = options?.storeRoot ?? getAliceStoreRoot();
   const binDir = options?.binDir ?? getAliceBinDir();
-  const manRoot = options?.manRoot ?? getAliceManDir();
-  const exportedCommand = resolve(binDir, entry.name);
+  const storePath = entry.storePath ?? resolve(storeRoot, entry.hash ?? entry.name);
 
-  replaceSymlinkAtomically(exportedCommand, sourceCommand);
+  // 编译为二进制可执行文件
+  const commandPath = compileSkillExecutable(storePath, entry.name, binDir);
 
-  const sourceManRoot = resolve(skillDir, "share", "man");
-  if (existsSync(sourceManRoot)) {
-    for (const section of ["txt", "man1"] as const) {
-      const sourceSection = resolve(sourceManRoot, section);
-      if (!existsSync(sourceSection)) continue;
-      const targetSection = resolve(manRoot, section);
-      mkdirSync(targetSection, { recursive: true });
-      for (const file of readdirSync(sourceSection)) {
-        const sourceFile = resolve(sourceSection, file);
-        const targetFile = resolve(targetSection, file);
-        replaceSymlinkAtomically(targetFile, sourceFile);
+  return { commandPath };
+}
+
+/**
+ * 启动时确保所有已安装 skill 的可执行文件存在于 bin 目录。
+ */
+export function ensureAllArtifacts(options?: {
+  registryPath?: string;
+  binDir?: string;
+  storeRoot?: string;
+}): { synced: number; fixed: number; broken: string[] } {
+  const registry = loadRegistry(options?.registryPath);
+  const binDir = options?.binDir ?? getAliceBinDir();
+  const storeRoot = options?.storeRoot ?? getAliceStoreRoot();
+  mkdirSync(binDir, { recursive: true });
+
+  let synced = 0;
+  let fixed = 0;
+  const broken: string[] = [];
+
+  for (const entry of Object.values(registry)) {
+    const target = resolve(binDir, entry.name);
+
+    // 检查可执行文件是否存在
+    if (!isExecutableFile(target)) {
+      try {
+        exportInstalledSkillArtifacts(entry, { binDir, storeRoot });
+        synced++;
+        if (!isExecutableFile(target)) {
+          broken.push(entry.name);
+        } else {
+          fixed++;
+        }
+      } catch {
+        broken.push(entry.name);
       }
     }
   }
 
-  return { commandPath: exportedCommand };
-}
-
-/**
- * 启动时确保所有已安装 skill 的 artifact（symlink + man page）
- * 存在于当前 bin/man 目录。
- *
- * 当 bin 目录从 skills/system-bin 迁移到 dist/bin 后，
- * 已有 skill 的 symlink 需要重建到新位置。
- */
-export function ensureAllArtifacts(): number {
-  const registry = loadRegistry();
-  const binDir = getAliceBinDir();
-  mkdirSync(binDir, { recursive: true });
-  let synced = 0;
-  for (const entry of Object.values(registry)) {
-    const target = resolve(binDir, entry.name);
-    // 只在 symlink 不存在时创建（幂等 + 快速跳过）
-    if (existsSync(target)) continue;
-    try {
-      exportInstalledSkillArtifacts(entry);
-      synced++;
-    } catch {
-      // 非致命：skill store 可能损坏
-    }
+  if (broken.length > 0) {
+    console.warn(
+      `[skill-registry] ${broken.length} skills have broken artifacts: ${broken.join(", ")}`,
+    );
   }
-  return synced;
+
+  return { synced, fixed, broken };
 }
 
-export function removeExportedSkillArtifacts(
-  name: string,
-  options?: { binDir?: string; manRoot?: string },
-): void {
+export function removeExportedSkillArtifacts(name: string, options?: { binDir?: string }): void {
   const binDir = options?.binDir ?? getAliceBinDir();
-  const manRoot = options?.manRoot ?? getAliceManDir();
   const exportedCommand = resolve(binDir, name);
   if (existsSync(exportedCommand)) {
     rmSync(exportedCommand, { force: true });
-  }
-  for (const section of ["txt", "man1"] as const) {
-    const suffix = section === "txt" ? ".txt" : ".1";
-    const manualPath = resolve(manRoot, section, `${name}${suffix}`);
-    if (existsSync(manualPath)) {
-      rmSync(manualPath, { force: true });
-    }
   }
 }

@@ -72,7 +72,6 @@ interface SkillPkgOptions {
   registryPath?: string;
   storeRoot?: string;
   binDir?: string;
-  manRoot?: string;
 }
 
 function resolveStoreRoot(options?: SkillPkgOptions): string {
@@ -127,12 +126,13 @@ export async function installSkill(manifestPath: string, opts?: SkillPkgOptions)
   const exported = exportInstalledSkillArtifacts(
     {
       name: manifest.name,
+      hash,
       storePath,
       commandPath: resolve(storePath, manifest.name),
     },
     {
       binDir: opts?.binDir,
-      manRoot: opts?.manRoot,
+      storeRoot: opts?.storeRoot,
     },
   );
 
@@ -155,7 +155,7 @@ export async function removeSkill(name: string, opts?: SkillPkgOptions): Promise
 
   // 热卸载
   unloadSkill(entry.actions, entry.categories);
-  removeExportedSkillArtifacts(name, { binDir: opts?.binDir, manRoot: opts?.manRoot });
+  removeExportedSkillArtifacts(name, { binDir: opts?.binDir });
 
   // 从存储中移除当前版本（保留 previousHash 用于回滚）
   removeFromStore(entry.hash, resolveStoreRoot(opts));
@@ -288,12 +288,13 @@ export async function upgradeSkill(
   const exported = exportInstalledSkillArtifacts(
     {
       name: manifest.name,
+      hash,
       storePath,
       commandPath: resolve(storePath, manifest.name),
     },
     {
       binDir: opts?.binDir,
-      manRoot: opts?.manRoot,
+      storeRoot: opts?.storeRoot,
     },
   );
 
@@ -338,12 +339,13 @@ export async function rollbackSkill(name: string, opts?: SkillPkgOptions): Promi
   const exported = exportInstalledSkillArtifacts(
     {
       name: manifest.name,
+      hash: entry.previousHash,
       storePath,
       commandPath: resolve(storePath, manifest.name),
     },
     {
       binDir: opts?.binDir,
-      manRoot: opts?.manRoot,
+      storeRoot: opts?.storeRoot,
     },
   );
 

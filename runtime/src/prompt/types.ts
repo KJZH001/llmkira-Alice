@@ -1,5 +1,5 @@
 /**
- * ADR-220: 声明式 User Prompt 数据类型。
+ * ADR-220 + ADR-237: 声明式 User Prompt 数据类型。
  *
  * 核心原则：EntityRef 必须有 id + displayName，编译期保证。
  * 没有 displayName 的实体不进 prompt（根治 "(a group)" 问题）。
@@ -8,10 +8,181 @@
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 场景枚举
+// 场景类型（ADR-237：封闭状态空间 + Pydantic 风格封装）
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type Scene = "channel" | "group" | "private";
+/**
+ * ADR-237: 聊天目标类型 — 封闭状态空间，无非法组合。
+ *
+ * | 类型            | 含义                  | Instincts             |
+ * |-----------------|----------------------|-----------------------|
+ * | private_person  | 私聊人               | DM_INSTINCTS          |
+ * | private_bot     | 私聊 Bot             | BOT_INSTINCTS         |
+ * | group           | 群聊                 | GROUP_INSTINCTS       |
+ * | channel_other   | 他人频道             | CHANNEL_INSTINCTS     |
+ * | channel_owned   | 自己的频道           | OWNED_CHANNEL_INSTINCTS |
+ */
+export type ChatTargetType =
+  | "private_person"
+  | "private_bot"
+  | "group"
+  | "channel_other"
+  | "channel_owned";
+
+/**
+ * ADR-237: ChannelClass — 四分法分类。
+ *
+ * 用于 rate cap、社交成本、门控行为等不需要区分 channel_owned/channel_other 的场景。
+ */
+export type ChannelClass = "private" | "group" | "channel" | "bot";
+
+/**
+ * ADR-237: ChatTarget — 场景判定封装类（Pydantic 风格）。
+ *
+ * 设计理念：
+ * - 核心是 ChatTargetType（封闭状态空间）
+ * - 派生属性通过 getter 暴露（Haskell-style derived）
+ * - 判定逻辑集中在静态工厂方法
+ * - 不可变（readonly），所有 getter 是纯函数
+ *
+ * @example
+ * ```ts
+ * const target = ChatTarget.from(chatType, isBot, aliceRole);
+ * if (target.isPrivate) { ... }
+ * const cls = target.channelClass; // 派生属性
+ * ```
+ */
+export class ChatTarget {
+  constructor(readonly type: ChatTargetType) {}
+
+  // ── 派生属性（Haskell-style derived functions）──
+
+  /** 四分法分类（rate cap / 社交成本用）。 */
+  get channelClass(): ChannelClass {
+    switch (this.type) {
+      case "private_person":
+        return "private";
+      case "private_bot":
+        return "bot";
+      case "group":
+        return "group";
+      case "channel_other":
+      case "channel_owned":
+        return "channel";
+    }
+  }
+
+  /** 是否私聊场景（人或 Bot）。 */
+  get isPrivate(): boolean {
+    return this.type === "private_person" || this.type === "private_bot";
+  }
+
+  /** 是否群聊场景。 */
+  get isGroup(): boolean {
+    return this.type === "group";
+  }
+
+  /** 是否频道场景（他人或自己）。 */
+  get isChannel(): boolean {
+    return this.type === "channel_other" || this.type === "channel_owned";
+  }
+
+  /** 是否自己的频道（策展人转发目标）。 */
+  get isOwnedChannel(): boolean {
+    return this.type === "channel_owned";
+  }
+
+  /** 是否 Bot 场景（私聊 Bot）。 */
+  get isBot(): boolean {
+    return this.type === "private_bot";
+  }
+
+  // ── 静态工厂（判定集中）──
+
+  /**
+   * 从 Telegram 信息判定场景类型。
+   *
+   * @param chatType - Telegram chat_type: "private" | "group" | "supergroup" | "channel"
+   * @param isBot - 对方是否 Bot（仅 private 场景有效）
+   * @param aliceRole - Alice 在频道中的角色：owner | admin | undefined
+   */
+  static from(
+    chatType: string | undefined,
+    isBot: boolean | undefined,
+    aliceRole: string | undefined,
+  ): ChatTarget {
+    // 频道场景
+    if (chatType === "channel") {
+      const role = aliceRole?.toLowerCase();
+      if (role === "owner" || role === "admin") {
+        return new ChatTarget("channel_owned");
+      }
+      return new ChatTarget("channel_other");
+    }
+
+    // 群聊场景
+    if (ChatTarget.isGroupChat(chatType)) {
+      return new ChatTarget("group");
+    }
+
+    // 私聊场景：判断是人还是 Bot
+    if (isBot === true) {
+      return new ChatTarget("private_bot");
+    }
+
+    return new ChatTarget("private_person");
+  }
+
+  // ── 静态工具方法（替代散落的 chatType 判定）──
+
+  /**
+   * 判断 chatType 是否为群聊（group 或 supergroup）。
+   *
+   * 用于历史行动分类、压力计算等只需要 chatType 的场景。
+   * 替代散落的 `chatType === "group" || chatType === "supergroup"`。
+   */
+  static isGroupChat(chatType: string | undefined): boolean {
+    return chatType === "group" || chatType === "supergroup";
+  }
+
+  /**
+   * 判断 chatType 是否为频道。
+   */
+  static isChannelChat(chatType: string | undefined): boolean {
+    return chatType === "channel";
+  }
+
+  /**
+   * 判断 chatType 是否为私聊。
+   */
+  static isPrivateChat(chatType: string | undefined): boolean {
+    return chatType === "private";
+  }
+
+  // ── 工具方法 ──
+
+  /** 类型相等判断。 */
+  equals(other: ChatTargetType | ChatTarget): boolean {
+    const otherType = typeof other === "string" ? other : other.type;
+    return this.type === otherType;
+  }
+
+  /** 用于日志/调试。 */
+  toString(): string {
+    return `ChatTarget(${this.type})`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 向后兼容（过渡期保留函数形式，内部委托给 ChatTarget）
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * @deprecated 使用 ChatTarget.channelClass 属性
+ */
+export function toChannelClass(type: ChatTargetType): ChannelClass {
+  return new ChatTarget(type).channelClass;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // EntityRef — 编译期保证 id + displayName 共存
@@ -66,6 +237,18 @@ export interface GroupSlot {
   interests: readonly string[];
   /** 群组简介（LLM 理解群组定位）。 */
   bio?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OwnedChannelSlot — Alice 拥有/管理的频道（转发目标）
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Alice 的频道（ADR-237：策展人转发目标）。 */
+export interface OwnedChannelSlot {
+  /** ref.id 用于 irc forward --to @id。 */
+  ref: EntityRef;
+  /** 角色标识。 */
+  role: "owner" | "admin";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -164,12 +347,15 @@ export interface FeedItemSlot {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface UserPromptSnapshot {
-  // ── 场景 ──
-  scene: Scene;
+  // ── 场景（ADR-237：封闭状态空间）──
+  /** ADR-237: 聊天目标类型 — 场景判定的唯一真相源。 */
+  chatTargetType: ChatTargetType;
 
   // ── 时间 ──
   /** 墙钟时间（ms）。 */
   nowMs: number;
+  /** 用户时区偏移（小时），如 UTC+8 → 8。 */
+  timezoneOffset: number;
 
   // ── 心情（语义标签，非数值）──
   moodLabel: string;
@@ -194,6 +380,8 @@ export interface UserPromptSnapshot {
   // ── 频道社交全景（仅 channel 场景）──
   contacts: readonly ContactSlot[];
   groups: readonly GroupSlot[];
+  /** ADR-237: Alice 的频道（策展人转发目标）。 */
+  ownedChannels: readonly OwnedChannelSlot[];
 
   // ── 消息流（统一时间线）──
   timeline: TimelineSlot;

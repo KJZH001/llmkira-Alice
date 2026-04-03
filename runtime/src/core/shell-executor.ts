@@ -156,7 +156,6 @@ export async function executeShellScript(
     duration: 0,
     thinks: [],
     queryLogs: [],
-    contextVars: opts.contextVars,
     completedActions: [],
     silenceReason: null,
   };

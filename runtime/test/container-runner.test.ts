@@ -34,15 +34,11 @@ describe("container runner", () => {
         isolation: "sandboxed",
         env: expect.objectContaining({
           ALICE_SYSTEM_BIN_DIR: ALICE_CONTAINER_PATHS.bin,
-          ALICE_MANPATH: ALICE_CONTAINER_PATHS.man,
-          ALICE_STORE_ROOT: ALICE_CONTAINER_PATHS.store,
           ALICE_HOME: ALICE_CONTAINER_PATHS.home,
           HOME: ALICE_CONTAINER_PATHS.home,
         }),
         extraMounts: expect.arrayContaining([
           expect.objectContaining({ target: ALICE_CONTAINER_PATHS.bin, readOnly: true }),
-          expect.objectContaining({ target: ALICE_CONTAINER_PATHS.man, readOnly: true }),
-          expect.objectContaining({ target: ALICE_CONTAINER_PATHS.store, readOnly: true }),
           expect.objectContaining({ target: ALICE_CONTAINER_PATHS.home, readOnly: false }),
         ]),
       }),

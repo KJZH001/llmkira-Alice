@@ -1,5 +1,5 @@
 /**
- * ADR-220: 私聊场景渲染器。
+ * ADR-220 + ADR-237: 私聊场景渲染器。
  *
  * 私聊是一对一对话——所有消息都对着你说。
  * 不出现社交全景（那是频道的事）。
@@ -15,46 +15,65 @@
  */
 
 import type { UserPromptSnapshot } from "../types.js";
+import { localNow } from "../../telegram/apps/shared.js";
 
 export function renderPrivate(snapshot: UserPromptSnapshot): string {
   const lines: string[] = [];
 
+  // ADR-237: 从 chatTargetType 判断是否 Bot 场景
+  const isBot = snapshot.chatTargetType === "private_bot";
+
   // ── Section 1: 时间 + 心情 + 对话对象 ──
   // LLM 需要知道对方是谁、关系如何，来调整语气和亲密度
-  const now = new Date(snapshot.nowMs);
+  // ADR-34: 使用配置的时区，而非系统时区
+  const now = localNow(snapshot.timezoneOffset);
   const timeStr = now.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: `Etc/GMT${snapshot.timezoneOffset <= 0 ? '+' : '-'}${Math.abs(snapshot.timezoneOffset)}`,
   });
 
-  const targetLabel = snapshot.target
-    ? `Talking to ${snapshot.target.displayName}`
-    : "In a private chat";
-  const relPart = snapshot.relationshipDesc ? ` (${snapshot.relationshipDesc})` : "";
+  // Bot 场景：简化 header，不渲染关系/心情/画像
+  if (isBot) {
+    const targetLabel = snapshot.target
+      ? `Interacting with ${snapshot.target.displayName} (bot)`
+      : "Interacting with a bot";
+    lines.push(`${timeStr}. ${targetLabel}. Current mood: ${snapshot.moodLabel}.`);
+  } else {
+    const targetLabel = snapshot.target
+      ? `Talking to ${snapshot.target.displayName}`
+      : "In a private chat";
+    const relPart = snapshot.relationshipDesc ? ` (${snapshot.relationshipDesc})` : "";
 
-  // 层② 联系人心情——整合到 Section 1
-  const moodPart = snapshot.contactMood ? ` They seem ${snapshot.contactMood}.` : "";
-  lines.push(
-    `${timeStr}. ${targetLabel}${relPart}. Current mood: ${snapshot.moodLabel}.${moodPart}`,
-  );
+    // 层② 联系人心情——整合到 Section 1
+    const moodPart = snapshot.contactMood ? ` They seem ${snapshot.contactMood}.` : "";
+    lines.push(
+      `${timeStr}. ${targetLabel}${relPart}. Current mood: ${snapshot.moodLabel}.${moodPart}`,
+    );
 
-  // 层② 联系人画像——整合到 Section 1
-  if (snapshot.contactProfile) {
-    const parts: string[] = [];
-    if (snapshot.contactProfile.portrait) parts.push(snapshot.contactProfile.portrait);
-    if (snapshot.contactProfile.bio) parts.push(`Bio: ${snapshot.contactProfile.bio.slice(0, 80)}`);
-    if (snapshot.contactProfile.traits.length > 0)
-      parts.push(`Traits: ${snapshot.contactProfile.traits.join(", ")}`);
-    if (snapshot.contactProfile.interests.length > 0)
-      parts.push(`Interests: ${snapshot.contactProfile.interests.join(", ")}`);
-    if (parts.length > 0) lines.push(parts.join(". ") + ".");
+    // 层② 联系人画像——整合到 Section 1
+    if (snapshot.contactProfile) {
+      const parts: string[] = [];
+      if (snapshot.contactProfile.portrait) parts.push(snapshot.contactProfile.portrait);
+      if (snapshot.contactProfile.bio)
+        parts.push(`Bio: ${snapshot.contactProfile.bio.slice(0, 80)}`);
+      if (snapshot.contactProfile.traits.length > 0)
+        parts.push(`Traits: ${snapshot.contactProfile.traits.join(", ")}`);
+      if (snapshot.contactProfile.interests.length > 0)
+        parts.push(`Interests: ${snapshot.contactProfile.interests.join(", ")}`);
+      if (parts.length > 0) lines.push(parts.join(". ") + ".");
+    }
   }
 
   // 轮次感知
   if (snapshot.roundHint) {
     lines.push("");
     lines.push(snapshot.roundHint);
+  }
+  // ADR-232: TC episode 提示（watching 续轮后，告知结果已可见）
+  if (snapshot.episodeHint) {
+    lines.push(snapshot.episodeHint);
   }
 
   // ── Section 2: 防复读 ──
