@@ -8,17 +8,11 @@ import {
   executeDockerCommand,
   executeDockerProcess,
 } from "./backends/docker.js";
-import {
-  buildInstalledSkillContainerEnv,
-  getAliceBinDir,
-  getAliceManDir,
-  getAliceStoreRoot,
-} from "./registry.js";
+import { buildInstalledSkillContainerEnv, getAliceBinDir, getAliceStoreRoot } from "./registry.js";
 
 export const ALICE_CONTAINER_PATHS = {
   bin: "/opt/alice/bin",
   store: "/opt/alice/store",
-  man: "/opt/alice/share/man",
   home: "/home/alice",
 } as const;
 
@@ -50,8 +44,8 @@ function buildBaseMounts(includeAliceHome: boolean): Mount[] {
   const mounts: Mount[] = [
     { source: getAliceBinDir(), target: ALICE_CONTAINER_PATHS.bin, readOnly: true },
     { source: getAliceStoreRoot(), target: ALICE_CONTAINER_PATHS.store, readOnly: true },
-    { source: getAliceManDir(), target: ALICE_CONTAINER_PATHS.man, readOnly: true },
   ];
+
   if (includeAliceHome) {
     mounts.push({
       source: ALICE_HOME,
@@ -87,8 +81,6 @@ function buildRunnerOptions(opts: AliceSandboxExecOptions): DockerExecOptions {
         ...(opts.env ?? {}),
       },
       binDir: ALICE_CONTAINER_PATHS.bin,
-      manRoot: ALICE_CONTAINER_PATHS.man,
-      storeRoot: ALICE_CONTAINER_PATHS.store,
     }),
     extraMounts: [...buildBaseMounts(opts.includeAliceHome ?? false), ...(opts.extraMounts ?? [])],
   };
