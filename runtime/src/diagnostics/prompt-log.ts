@@ -83,7 +83,7 @@ export function logPromptSnapshot(snapshot: PromptSnapshot): void {
       `| target | ${snapshot.target ?? "(none)"} |`,
       `| voice | ${snapshot.voice} |`,
       `| time | ${ts.toISOString()} |`,
-      `| script | ${snapshot.script ? `${snapshot.script.length} chars` : "FAILED"} |`,
+      `| script | ${snapshot.script === null ? "FAILED" : snapshot.script.length > 0 ? `${snapshot.script.length} chars` : "SILENT (0 tools)"} |`,
       "",
     ];
 
@@ -94,10 +94,12 @@ export function logPromptSnapshot(snapshot: PromptSnapshot): void {
     parts.push("## User Prompt", "", "```", snapshot.user, "```", "");
 
     // LLM script
-    if (snapshot.script) {
-      parts.push("## LLM Script", "", "```sh", snapshot.script, "```", "");
-    } else {
+    if (snapshot.script === null) {
       parts.push("## LLM Script", "", "**LLM 调用失败**", "");
+    } else if (snapshot.script.length === 0) {
+      parts.push("## LLM Script", "", "**模型未调用任何工具（静默）**", "");
+    } else {
+      parts.push("## LLM Script", "", "```sh", snapshot.script, "```", "");
     }
 
     // 执行结果

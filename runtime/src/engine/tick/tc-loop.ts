@@ -87,13 +87,16 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
 
   try {
     while (toolCallCount < TC_MAX_TOOL_CALLS) {
+      // ADR-233: 首轮强制 tool_choice="required"，确保模型至少调用一次工具（bash 或 signal）。
+      // 后续轮次 "auto" 允许自然 end_turn。
+      const choice: "required" | "auto" = toolCallCount === 0 ? "required" : "auto";
       const response = await withResilience(
         () =>
           ctx.openai.chat.completions.create({
             model: ctx.model,
             messages,
             tools: ADR233_TOOLS,
-            tool_choice: "auto",
+            tool_choice: choice,
             temperature: 0.7,
           }),
         {},

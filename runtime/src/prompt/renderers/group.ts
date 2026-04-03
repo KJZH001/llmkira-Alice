@@ -108,9 +108,10 @@ export function renderGroup(snapshot: UserPromptSnapshot): string {
   // threadId 是功能性的——LLM 需要它调用 topic_advance
   if (snapshot.threads.length > 0) {
     lines.push("");
-    lines.push(
-      `Open topics: ${JSON.stringify(snapshot.threads.map((t) => ({ id: t.threadId, title: t.title })))}`,
-    );
+    lines.push("Open topics:");
+    for (const t of snapshot.threads) {
+      lines.push(`- #${t.threadId} "${t.title}"`);
+    }
   }
 
   // ── Section 6: 行动反馈 ──
