@@ -371,6 +371,47 @@ describe("scoreAllCandidates", () => {
     expect(result).toBeNull();
   });
 
+  it("targetWhitelist 只允许白名单 target 进入候选池", () => {
+    const G = buildGraph([
+      { id: "channel:a", tierContact: 5 },
+      { id: "channel:b", tierContact: 5 },
+    ]);
+    const tensionMap = new Map<string, TensionVector>([
+      ["channel:a", tension({ tau1: 3.0, tau3: 2.0 })],
+      ["channel:b", tension({ tau1: 0.5, tau3: 0.5 })],
+    ]);
+
+    const config = buildIAUSConfig(G, tensionMap, {
+      nowMs,
+      targetWhitelist: new Set(["channel:b"]),
+      contributions: {
+        P1: { "channel:a": 10, "channel:b": 1 },
+        P3: { "channel:a": 5, "channel:b": 1 },
+      },
+    });
+    const result = scoreAllCandidates(tensionMap, G, 100, [], config);
+
+    expect(result).not.toBeNull();
+    expect(result?.candidate.target).toBe("channel:b");
+    expect(result?.scored.every((entry) => entry.target === "channel:b")).toBe(true);
+  });
+
+  it("targetWhitelist 过滤掉全部 channel 时返回 null", () => {
+    const G = buildGraph([{ id: "channel:a", tierContact: 5 }]);
+    const tensionMap = new Map<string, TensionVector>([
+      ["channel:a", tension({ tau1: 1.0, tau3: 0.5 })],
+    ]);
+
+    const config = buildIAUSConfig(G, tensionMap, {
+      nowMs,
+      targetWhitelist: new Set(["channel:missing"]),
+      contributions: { P1: { "channel:a": 10 } },
+    });
+    const result = scoreAllCandidates(tensionMap, G, 100, [], config);
+
+    expect(result).toBeNull();
+  });
+
   it("单个 channel + 非零张力 → 返回结果", () => {
     const G = buildGraph([{ id: "channel:a", tierContact: 5 }]);
     const tensionMap = new Map([["channel:a", tension({ tau1: 1.0, tau3: 0.5 })]]);

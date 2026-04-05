@@ -223,6 +223,47 @@ describe("computeFocalSets", () => {
     }
   });
 
+  it("targetWhitelist 只保留白名单实体参与焦点竞争", () => {
+    const G = new WorldModel();
+    G.tick = 100;
+    G.addChannel("e1");
+    G.addChannel("e2");
+    const tensionMap = makeTensionMap([
+      ["e1", { tau1: 20, tau2: 20, tau3: 20, tau5: 20 }],
+      ["e2", { tau1: 5, tau2: 5, tau3: 5, tau5: 5 }],
+    ]);
+
+    const result = computeFocalSets(tensionMap, G, 100, {
+      uncertainty: 0,
+      nowMs: tickMs(100),
+      targetWhitelist: new Set(["e2"]),
+    });
+
+    for (const voice of ["diligence", "curiosity", "sociability"] as const) {
+      expect(result[voice].primaryTarget).toBe("e2");
+      expect(result[voice].entities).toEqual(["e2"]);
+    }
+  });
+
+  it("targetWhitelist 过滤掉全部实体时返回空焦点集", () => {
+    const G = new WorldModel();
+    G.tick = 100;
+    G.addChannel("e1");
+    const tensionMap = makeTensionMap([["e1", { tau1: 5, tau3: 3 }]]);
+
+    const result = computeFocalSets(tensionMap, G, 100, {
+      uncertainty: 0,
+      nowMs: tickMs(100),
+      targetWhitelist: new Set(["e404"]),
+    });
+
+    for (const voice of ["diligence", "curiosity", "sociability", "caution"] as const) {
+      expect(result[voice].entities).toEqual([]);
+      expect(result[voice].primaryTarget).toBeNull();
+      expect(result[voice].meanRelevance).toBe(0);
+    }
+  });
+
   it("top-K 按 R_v 降序排列", () => {
     const G = new WorldModel();
     G.tick = 100;

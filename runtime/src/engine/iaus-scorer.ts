@@ -263,6 +263,8 @@ export interface IAUSConfig {
   voiceLastWon: Record<VoiceAction, number>;
   nowMs: number;
   excludeTargets?: ReadonlySet<string>;
+  /** 候选目标白名单。设置后仅这些 target 进入 IAUS 候选池。 */
+  targetWhitelist?: ReadonlySet<string> | null;
   /** 测试用：禁用 Boltzmann 随机选择，改用 argmax（确定性）。 */
   deterministic?: boolean;
   /** ADR-182 D1: 上一 tick 胜出的 (action, target)。 */
@@ -707,7 +709,9 @@ export function scoreAllCandidates(
   const { nowMs, candidateCtx, saturationCost: satConfig, windowStartMs } = config;
 
   const selfMood = readSelfMood(G);
-  const channels = G.getEntitiesByType("channel");
+  const channels = G.getEntitiesByType("channel").filter(
+    (target) => !config.targetWhitelist || config.targetWhitelist.has(target),
+  );
 
   const scored: Array<{
     candidate: IAUSCandidate;

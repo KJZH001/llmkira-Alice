@@ -164,10 +164,16 @@ export function computeFocalSets(
   tensionMap: Map<string, TensionVector>,
   G: WorldModel,
   _tick: number,
-  options: { uncertainty?: number; nowMs?: number } = {},
+  options: {
+    uncertainty?: number;
+    nowMs?: number;
+    targetWhitelist?: ReadonlySet<string> | null;
+  } = {},
 ): Record<VoiceAction, FocalSet> {
-  const { uncertainty = 0.5, nowMs = Date.now() } = options;
-  const entityIds = Array.from(tensionMap.keys());
+  const { uncertainty = 0.5, nowMs = Date.now(), targetWhitelist = null } = options;
+  const entityIds = Array.from(tensionMap.keys()).filter(
+    (eid) => !targetWhitelist || targetWhitelist.has(eid),
+  );
   const K = focalSetSize(entityIds.length);
 
   const getTension = (eid: string): TensionVector => tensionMap.get(eid) ?? ZERO_TENSION;

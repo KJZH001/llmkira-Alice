@@ -642,6 +642,7 @@ function computeTickPlan(
     recentEventCounts: state.recentEventCounts,
     // ADR-75: 声部疲劳 — 论文 Eq. voice-fatigue
     voiceLastWon: state.deliberation.voiceLastWon,
+    targetWhitelist: config.focusWhitelist,
   });
   const [, action] = selectAction(loudness);
 
@@ -860,6 +861,7 @@ function computeTickPlan(
     personality,
     voiceLastWon: state.deliberation.voiceLastWon,
     nowMs,
+    targetWhitelist: config.focusWhitelist,
     deterministic: config.iausDeterministic,
     // ADR-182 D1: Momentum Bonus
     lastWinner: state.lastSelectedCandidate,

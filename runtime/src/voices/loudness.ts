@@ -113,6 +113,8 @@ export function computeLoudness(
     voiceCooldown?: number;
     /** ADR-110: 当前墙钟时间（ms）。未提供时使用 Date.now()。 */
     nowMs?: number;
+    /** 候选目标白名单。设置后仅这些 target 可进入焦点集。 */
+    targetWhitelist?: ReadonlySet<string> | null;
   } = {},
 ): LoudnessResult {
   const {
@@ -122,13 +124,18 @@ export function computeLoudness(
     voiceLastWon = null,
     voiceCooldown = DEFAULT_VOICE_COOLDOWN,
     nowMs = Date.now(),
+    targetWhitelist = null,
   } = options;
 
   // 全局不确定性（R_Caution 基线）— ADR-112 D3: 含环境不确定性
   const uncertainty = computeUncertainty(recentEventCounts, 10, 2.0, G);
 
   // 焦点集计算
-  const focalSets = computeFocalSets(tensionMap, G, tick, { uncertainty, nowMs });
+  const focalSets = computeFocalSets(tensionMap, G, tick, {
+    uncertainty,
+    nowMs,
+    targetWhitelist,
+  });
 
   // ADR-181: L_v = π_v × mean(R_v) × φ_v × ψ_v(m) + ε_v
   // φ_v = voice fatigue factor (ADR-75, paper Eq. voice-fatigue)

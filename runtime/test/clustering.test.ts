@@ -2,6 +2,9 @@
  * ADR-226: 话题自动聚类 — 核心 + Mod 测试。
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClusteringResult } from "../src/engine/clustering.js";
 import { resetReflectClient } from "../src/engine/clustering.js";
@@ -189,5 +192,68 @@ describe("Config clustering 字段", () => {
     // 回退到主 LLM
     expect(config.llmReflectBaseUrl).toBe(config.llmBaseUrl);
     expect(config.llmReflectApiKey).toBe(config.llmApiKey);
+  });
+
+  it("loadConfig 自动发现 ALICE_STATE_DIR 下的焦点白名单文件", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "alice-focus-whitelist-"));
+    const whitelistPath = join(tempDir, "focus-whitelist.txt");
+    writeFileSync(
+      whitelistPath,
+      ["# 只允许这些目标", "-1001234567890 # 主群", "", "7785440246", "-1001234567890"].join(
+        "\n",
+      ),
+      "utf-8",
+    );
+
+    const previousPath = process.env.FOCUS_WHITELIST_PATH;
+    const previousStateDir = process.env.ALICE_STATE_DIR;
+    delete process.env.FOCUS_WHITELIST_PATH;
+    process.env.ALICE_STATE_DIR = tempDir;
+
+    try {
+      vi.resetModules();
+      const { loadConfig } = await import("../src/config.js");
+      const config = loadConfig();
+
+      expect(config.focusWhitelistPath).toBe(whitelistPath);
+      expect(Array.from(config.focusWhitelist ?? [])).toEqual([
+        "channel:-1001234567890",
+        "channel:7785440246",
+      ]);
+    } finally {
+      if (previousPath === undefined) delete process.env.FOCUS_WHITELIST_PATH;
+      else process.env.FOCUS_WHITELIST_PATH = previousPath;
+      if (previousStateDir === undefined) delete process.env.ALICE_STATE_DIR;
+      else process.env.ALICE_STATE_DIR = previousStateDir;
+      vi.resetModules();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("loadConfig 支持 FOCUS_WHITELIST_PATH 显式覆盖默认文件名", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "alice-focus-whitelist-explicit-"));
+    const whitelistPath = join(tempDir, "custom-focus.txt");
+    writeFileSync(whitelistPath, "123456789\n", "utf-8");
+
+    const previous = process.env.FOCUS_WHITELIST_PATH;
+    const previousStateDir = process.env.ALICE_STATE_DIR;
+    process.env.FOCUS_WHITELIST_PATH = whitelistPath;
+    process.env.ALICE_STATE_DIR = join(tempDir, "other-state-dir");
+
+    try {
+      vi.resetModules();
+      const { loadConfig } = await import("../src/config.js");
+      const config = loadConfig();
+
+      expect(config.focusWhitelistPath).toBe(whitelistPath);
+      expect(Array.from(config.focusWhitelist ?? [])).toEqual(["channel:123456789"]);
+    } finally {
+      if (previous === undefined) delete process.env.FOCUS_WHITELIST_PATH;
+      else process.env.FOCUS_WHITELIST_PATH = previous;
+      if (previousStateDir === undefined) delete process.env.ALICE_STATE_DIR;
+      else process.env.ALICE_STATE_DIR = previousStateDir;
+      vi.resetModules();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

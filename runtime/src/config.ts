@@ -1,6 +1,8 @@
 /**
  * 全局配置：环境变量 + 压力场模型参数默认值。
  */
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { z } from "zod";
 import {
   type AttentionDebtConfig,
@@ -14,6 +16,8 @@ import {
   type SocialCostConfig,
   SocialCostConfigSchema,
 } from "./pressure/social-cost.js";
+import { ensureChannelId } from "./graph/constants.js";
+import { ALICE_STATE_DIR } from "./runtime-paths.js";
 import type { PersonalityWeights, PressureDims } from "./utils/math.js";
 
 // -- D5: Provider Fallback（ADR-123 §D5）-------------------------------------
@@ -58,6 +62,44 @@ function parseProviders(): ProviderConfig[] {
   }
 
   return providers;
+}
+
+const DEFAULT_FOCUS_WHITELIST_FILENAME = "focus-whitelist.txt";
+
+function parseFocusWhitelistFile(content: string): ReadonlySet<string> {
+  const targets = new Set<string>();
+  for (const line of content.split(/\r?\n/u)) {
+    const trimmed = line.replace(/\s+#.*$/u, "").trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const channelId = ensureChannelId(trimmed);
+    if (channelId) {
+      targets.add(channelId);
+      continue;
+    }
+    targets.add(trimmed);
+  }
+  return targets;
+}
+
+function loadFocusWhitelist(): { path: string; targets: ReadonlySet<string> | null } {
+  const rawPath = process.env.FOCUS_WHITELIST_PATH?.trim() ?? "";
+  if (rawPath) {
+    const resolvedPath = resolve(rawPath);
+    const content = readFileSync(resolvedPath, "utf-8");
+    return {
+      path: resolvedPath,
+      targets: parseFocusWhitelistFile(content),
+    };
+  }
+
+  const resolvedPath = resolve(ALICE_STATE_DIR, DEFAULT_FOCUS_WHITELIST_FILENAME);
+  if (!existsSync(resolvedPath)) return { path: "", targets: null };
+
+  const content = readFileSync(resolvedPath, "utf-8");
+  return {
+    path: resolvedPath,
+    targets: parseFocusWhitelistFile(content),
+  };
 }
 
 export interface Config {
@@ -299,6 +341,18 @@ export interface Config {
   };
 
   /**
+   * 焦点白名单文件绝对路径。空字符串 = 禁用白名单。
+   * 默认自动发现 `${ALICE_STATE_DIR}/focus-whitelist.txt`，也可用 FOCUS_WHITELIST_PATH 显式覆盖。
+   * 文件格式：每行一个 Telegram chat ID（如 -1001234567890）或兼容的 graph target，支持 `#` 注释。
+   */
+  focusWhitelistPath: string;
+  /**
+   * 候选目标白名单。设置后，焦点集与 IAUS 只会在这些 target 中挑选目标。
+   * 压力场本体仍按全量图照常计算。
+   */
+  focusWhitelist: ReadonlySet<string> | null;
+
+  /**
    * ADR-172: Operator 的私聊 channel ID（graph ID 格式 "channel:xxx"）。
    * 系统线程（morning_digest, weekly_reflection）路由到此频道。
    * 未设置时回退到 telegramAdmin 推导。
@@ -313,6 +367,8 @@ export interface Config {
 }
 
 export function loadConfig(): Config {
+  const focusWhitelist = loadFocusWhitelist();
+
   return {
     telegramApiId: Number(process.env.TELEGRAM_API_ID ?? "0"),
     telegramApiHash: process.env.TELEGRAM_API_HASH ?? "",
@@ -466,6 +522,9 @@ export function loadConfig(): Config {
       reflectionHour: 20,
       anomalyZThreshold: 3.0,
     },
+
+    focusWhitelistPath: focusWhitelist.path,
+    focusWhitelist: focusWhitelist.targets,
 
     // ADR-172: 系统线程路由目标。未设置时从 TELEGRAM_ADMIN 推导
     operatorChannelId:

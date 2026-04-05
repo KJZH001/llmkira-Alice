@@ -799,6 +799,7 @@ async function main() {
       clock.tick,
       {
         recentEventCounts,
+        targetWhitelist: config.focusWhitelist,
       },
     );
     const [, dryAction] = selectAction(dryLoudness);

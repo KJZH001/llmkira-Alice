@@ -28,6 +28,44 @@ LLM_API_KEY=sk-xxx
 LLM_MODEL=gpt-4o
 ```
 
+## 焦点白名单
+
+如果你希望 Alice 只在少数几个聊天里分配注意力，可以直接在实例工作目录放一个
+`focus-whitelist.txt`。文件一旦存在，运行时会自动读取；不需要额外配置 `.env`。
+
+这里建议直接写 Telegram chat ID，不需要写内部的 `channel:` 前缀。
+运行时会自动把纯数字 ID 归一化成内部 target。
+
+例如，工作目录是 `~/alice`：
+
+```bash
+cd ~/alice
+cat > focus-whitelist.txt <<'EOF'
+# 每行一个 Telegram chat ID
+-1001234567890
+7785440246
+EOF
+```
+
+文件格式规则：
+
+- 一行一个 Telegram chat ID，例如 `-1001234567890`
+- 也兼容内部格式 `channel:-1001234567890`
+- 支持空行
+- 支持 `#` 注释，包括行尾注释
+
+行为边界：
+
+- 白名单只限制“待选目标”
+- 压力场仍然对全量图正常计算
+- 修改白名单文件后需要重启 Alice 生效
+
+如果你不想使用默认文件名，也可以在 `.env` 里显式指定路径：
+
+```bash
+FOCUS_WHITELIST_PATH=/path/to/custom-focus-whitelist.txt
+```
+
 ## 方式一：一键安装
 
 这是最省事的路径。安装脚本现在会同时完成：
