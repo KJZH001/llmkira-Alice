@@ -56,6 +56,16 @@ describe("executeShellScript", () => {
     expect(result.errors[0]).toContain("boom");
   });
 
+  it("returns instruction errors before entering the container for invalid scripts", async () => {
+    const result = await executeShellScript("slef feel --valence positive", {});
+
+    expect(result.instructionErrors).toEqual([
+      "line 1: unknown command 'slef', did you mean 'self'?",
+    ]);
+    expect(result.logs).toEqual([]);
+    expect(result.errors).toEqual([]);
+  });
+
   it("strips garbled ANSI fragments and invisible noise from logs", async () => {
     const zws = "\u200b";
     const result = await executeShellScript(

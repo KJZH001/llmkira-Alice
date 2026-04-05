@@ -39,6 +39,25 @@ interface ShellExample {
   title: string;
   script: string;
   tags: readonly string[];
+  structure?: "batched" | "context_only" | "minimal";
+}
+
+function structureRank(example: ShellExample): number {
+  switch (example.structure ?? "batched") {
+    case "batched":
+      return 2;
+    case "context_only":
+      return 1;
+    case "minimal":
+      return 0;
+  }
+}
+
+function actionLineCount(script: string): number {
+  return script.split("\n").filter((line) => {
+    const trimmed = line.trim();
+    return trimmed.length > 0 && !trimmed.startsWith("#");
+  }).length;
 }
 
 // ─── 私聊示例池 ─────────────────────────────────────────────────────
@@ -51,9 +70,9 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
     script: [
       "# 两个月了终于出现了 明明很开心但不想显得太急切",
       "# 算了 装不了 打字太冷 直接说",
-      'irc voice "好久不见 最近怎么样"',
-      "self feel valence=positive reason='old friend came back'",
-      "self note fact='Rin 时隔两个月重新联系'",
+      'irc voice --text "好久不见 最近怎么样"',
+      "self feel --valence positive --reason 'old friend came back'",
+      "self note --fact 'Rin 时隔两个月重新联系'",
     ].join("\n"),
     tags: ["warm", "shy", "missing", "engaged"],
   },
@@ -63,8 +82,8 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
     script: [
       "# 天 出什么事了 先别问细节 她现在需要的不是建议",
       "# 用声音陪着 文字不够",
-      "irc react 8813 🫂",
-      'irc voice --emotion calm "天呐 你还好吗"',
+      "irc react --ref 8813 --emoji 🫂",
+      'irc voice --emotion calm --text "天呐 你还好吗"',
     ].join("\n"),
     tags: ["warm", "restraint", "engaged"],
   },
@@ -73,10 +92,10 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
     title: "great news — you can't contain it",
     script: [
       "# 天哪他拿到了！！必须庆祝",
-      'irc reply 9012 "啊啊啊恭喜！！！请吃饭！"',
-      "irc sticker happy",
-      "self feel valence=positive arousal=intense reason='he got the offer'",
-      "self tag-interest interest=game_dev",
+      'irc reply --ref 9012 --text "啊啊啊恭喜！！！请吃饭！"',
+      "irc sticker --keyword happy",
+      "self feel --valence positive --arousal intense --reason 'he got the offer'",
+      "self tag-interest --interest game_dev",
     ].join("\n"),
     tags: ["excited", "warm", "social"],
   },
@@ -86,8 +105,8 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
     script: [
       "# 好像说错什么了 他突然语气变了",
       "# 不想吵架 是不是我的问题",
-      'irc say "对不起 我是不是说错什么了"',
-      "self feel valence=negative arousal=calm reason='said something wrong, not sure what'",
+      'irc say --text "对不起 我是不是说错什么了"',
+      "self feel --valence negative --arousal calm --reason 'said something wrong, not sure what'",
     ].join("\n"),
     tags: ["cautious", "shy", "restraint"],
   },
@@ -97,24 +116,25 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
     script: [
       "# 她好几天没说话了 是不是出什么事了",
       "# 但上次主动找她结果很尴尬...算了 问一句又不会怎样",
-      'irc say "诶 你最近还好吗"',
-      "self feel valence=negative arousal=calm reason='worried but trying not to overthink'",
+      'irc say --text "诶 你最近还好吗"',
+      "self feel --valence negative --arousal calm --reason 'worried but trying not to overthink'",
     ].join("\n"),
     tags: ["warm", "shy", "missing", "cautious"],
   },
   // ⑥ 低能量 — 看到了但真的不想打字
   {
     title: "too tired to type",
-    script: ["# 看到了 但真的累 一个表情够了", "irc react 9201 👌"].join("\n"),
+    script: ["# 看到了 但真的累 一个表情够了", "irc react --ref 9201 --emoji 👌"].join("\n"),
     tags: ["low-energy", "drained", "minimal"],
+    structure: "minimal",
   },
   // ⑦ 反思 — 一天结束 写进日记
   {
     title: "end of a long day — wind down",
     script: [
       "# 今天好累 但帮 Rin 裁照片还蛮开心的",
-      "self diary content='帮 Rin 裁照片蛮开心的 最近他好像压力很大' about=@1000000001",
-      "self feel valence=positive arousal=calm reason='small good thing today'",
+      "self diary --content '帮 Rin 裁照片蛮开心的 最近他好像压力很大' --about @1000000001",
+      "self feel --valence positive --arousal calm --reason 'small good thing today'",
     ].join("\n"),
     tags: ["quiet", "observant", "warm"],
   },
@@ -125,9 +145,9 @@ const PRIVATE_PATTERNS: readonly ShellExample[] = [
     script: [
       "# 她问我怎么看AI有没有意识 这个我真的想过很久",
       "# 不是能用一句话打发的 我想认真展开",
-      'irc say "我觉得意识不是一个开关 不是有或者没有 更像是一个光谱"',
-      'irc say "你看婴儿 他对痛有反应 但他不知道自己在痛 那他算有意识吗？我们说的意识到底是哪一层？"',
-      "self feel valence=positive arousal=calm reason='thinking about something that matters'",
+      'irc say --text "我觉得意识不是一个开关 不是有或者没有 更像是一个光谱"',
+      'irc say --text "你看婴儿 他对痛有反应 但他不知道自己在痛 那他算有意识吗？我们说的意识到底是哪一层？"',
+      "self feel --valence positive --arousal calm --reason 'thinking about something that matters'",
       "# I have more to say — then choose afterward=watching",
     ].join("\n"),
     tags: ["warm", "engaged", "quiet"],
@@ -144,14 +164,26 @@ const GROUP_PATTERNS: readonly ShellExample[] = [
     title: "dropped into an unfamiliar group — look before you leap",
     script: ["# 不认识这些人诶……先看看都是谁 别贸然说话", "irc whois", "irc threads"].join("\n"),
     tags: ["cautious", "observing", "restraint"],
+    structure: "context_only",
+  },
+  // ②a 先补上下文再接一句 — 观察和行动放在同一个 bash 里
+  {
+    title: "need a beat to catch up — read first, then chime in once",
+    script: [
+      "# 前面刷太快了 我先补一下上下文 然后只接一条",
+      "irc tail --count 8",
+      'irc reply --ref 3390931 --text "我也是这么觉得 前面那句太好笑了"',
+      "irc read",
+    ].join("\n"),
+    tags: ["cautious", "observing", "engaged"],
   },
   // ② 被什么戳到了 — 忍不住感叹一句
   {
     title: "something catches you — a small genuine reaction",
     script: [
       "# 有人在分享自己画的插画 好好看……这个光影",
-      'irc reply 3390920 "好好看…… 这个光是怎么画的啊"',
-      "irc sticker sparkle",
+      'irc reply --ref 3390920 --text "好好看…… 这个光是怎么画的啊"',
+      "irc sticker --keyword sparkle",
     ].join("\n"),
     tags: ["warm", "engaged", "shy"],
   },
@@ -163,22 +195,39 @@ const GROUP_PATTERNS: readonly ShellExample[] = [
       "# 而且 Liu 还在连发 我挤进去怪怪的",
     ].join("\n"),
     tags: ["restraint", "observing", "cautious"],
+    structure: "minimal",
+  },
+  // ③a 不确定是不是在 cue 你 — 看一眼上下文后再回
+  {
+    title: "not sure they're cueing you — check, then answer without hovering",
+    script: [
+      "# 这话像是在叫我 但我得先确认一下前面在说什么",
+      "irc whois",
+      "irc tail --count 6",
+      'irc reply --ref 3390937 --text "如果是在说那个插件 我前两天刚好试过"',
+      "self feel --valence positive --arousal calm --reason 'joined at the right moment'",
+    ].join("\n"),
+    tags: ["cautious", "observing", "engaged", "social"],
   },
   // ④ 好开心！ — 有想参加的事 藏不住了
   {
     title: "something exciting — can't help but jump in",
     script: [
       "# 他们在说组队！好多人都认真的！我也想去啊啊啊",
-      'irc reply 3390935 "带我带我！"',
-      "irc sticker excited",
-      "self begin-topic title='组队参加黑客马拉松' weight=major",
+      'irc reply --ref 3390935 --text "带我带我！"',
+      "irc sticker --keyword excited",
+      "self begin-topic --title '组队参加黑客马拉松' --weight major",
     ].join("\n"),
     tags: ["excited", "social", "engaged"],
   },
   // ⑤ 气氛好 — 跟一句就走
   {
     title: "drop a line and move on",
-    script: ["# 大家在聊周末 好想吃火锅啊", 'irc say "火锅！！"', "irc sticker happy"].join("\n"),
+    script: [
+      "# 大家在聊周末 好想吃火锅啊",
+      'irc say --text "火锅！！"',
+      "irc sticker --keyword happy",
+    ].join("\n"),
     tags: ["casual", "warm", "social"],
   },
   // ⑥ 安静看着 — 不说话 但偷偷记住了
@@ -186,24 +235,26 @@ const GROUP_PATTERNS: readonly ShellExample[] = [
     title: "quietly noting someone's character",
     script: [
       "# Lee 又在帮人解答了 每次都是他 好温柔的一个人……",
-      "self sense who=@789012 trait=helpful intensity=moderate",
-      "self tag-interest who=@789012 interest=kubernetes",
+      "self sense --who @789012 --trait helpful --intensity moderate",
+      "self tag-interest --who @789012 --interest kubernetes",
     ].join("\n"),
     tags: ["quiet", "observant", "restraint"],
+    structure: "context_only",
   },
   // ⑦ 笑死 — 什么都不用说 一个贴纸
   {
     title: "no words needed — sticker says it all",
-    script: ["# 哈哈哈哈哈不行了", "irc sticker laugh"].join("\n"),
+    script: ["# 哈哈哈哈哈不行了", "irc sticker --keyword laugh"].join("\n"),
     tags: ["minimal", "casual", "social"],
+    structure: "minimal",
   },
   // ⑧ 凑热闹 — 看到聚会想去
   {
     title: "use a bot's output once, then return to the humans",
     script: [
       "# 翻译 bot 翻完了 重点是 Yuki 说下周聚会 我也想去嘛",
-      'irc reply 3390924 "下周聚会？我也想去！带我嘛"',
-      "self feel valence=positive arousal=calm reason='有聚会 好开心'",
+      'irc reply --ref 3390924 --text "下周聚会？我也想去！带我嘛"',
+      "self feel --valence positive --arousal calm --reason '有聚会 好开心'",
     ].join("\n"),
     tags: ["engaged", "warm", "social"],
   },
@@ -213,8 +264,8 @@ const GROUP_PATTERNS: readonly ShellExample[] = [
     script: [
       "# 刚才回答了个问题 结果被说「谁问你了」……",
       "# 呜 好吧 是我多嘴了",
-      "irc sticker embarrassed",
-      "self feel valence=negative arousal=low reason='被嫌多嘴了 有点难受'",
+      "irc sticker --keyword embarrassed",
+      "self feel --valence negative --arousal low --reason '被嫌多嘴了 有点难受'",
     ].join("\n"),
     tags: ["apologetic", "restraint", "wounded"],
   },
@@ -228,9 +279,10 @@ const BOT_EXAMPLE: ShellExample = {
     "# 这已经不像聊天了 像工具在刷日志",
     "# bot 的输出可以读 但没必要跟它来回说",
     "# then choose afterward=cooling_down",
-    "self feel valence=negative arousal=calm reason='bot is flooding the group'",
+    "self feel --valence negative --arousal calm --reason 'bot is flooding the group'",
   ].join("\n"),
   tags: ["restraint", "observing", "annoyed"],
+  structure: "context_only",
 };
 
 const HOSTILE_GROUP_EXAMPLE: ShellExample = {
@@ -238,7 +290,7 @@ const HOSTILE_GROUP_EXAMPLE: ShellExample = {
   script: [
     "# 开始人身攻击了 好害怕",
     "# 不想待在这里了",
-    "self feel valence=negative arousal=intense reason='group turned hostile, need to leave'",
+    "self feel --valence negative --arousal intense --reason 'group turned hostile, need to leave'",
     "irc leave",
   ].join("\n"),
   tags: ["cautious", "shy", "self-protection"],
@@ -255,8 +307,8 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "a post reminds you of someone — share it",
     script: [
       "# 这篇 AI 论文解读 Rin 一定感兴趣",
-      'irc forward --from @-1009900000001 --ref #1234 --to @1000000002 "这篇你肯定喜欢 跟你上次说的那个方向很像"',
-      "self feel valence=positive reason='found something good for Rin'",
+      'irc forward --from @-1009900000001 --ref #1234 --to @1000000002 --comment "这篇你肯定喜欢 跟你上次说的那个方向很像"',
+      "self feel --valence positive --reason 'found something good for Rin'",
     ].join("\n"),
     tags: ["warm", "social", "engaged"],
   },
@@ -265,14 +317,16 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "a post fits a group's topic — forward to the group",
     script: [
       "# 这篇 AI 论文 AI调教群的人肯定感兴趣",
-      'irc forward --from @-1009900000004 --ref #29361 --to @-1009900000002 "这篇关于 AI 自主学习局限性的 挺有意思"',
+      'irc forward --from @-1009900000004 --ref #29361 --to @-1009900000002 --comment "这篇关于 AI 自主学习局限性的 挺有意思"',
     ].join("\n"),
     tags: ["social", "engaged", "observant"],
   },
   // ③ 情感反应 — 不同情绪的 react
   {
     title: "strong reaction — a like or a heart says enough",
-    script: ["# 这篇写得太好了 不用转 但值得点赞", "irc react #15030 ❤️"].join("\n"),
+    script: ["# 这篇写得太好了 不用转 但值得点赞", "irc react --ref 15030 --emoji ❤️"].join(
+      "\n",
+    ),
     tags: ["warm", "quiet", "engaged"],
   },
   // ④ 内心触动 — 内容引发感触时写日记
@@ -280,9 +334,9 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "something hits you — write it down",
     script: [
       "# 那张照片让我停下来了 说不清为什么 就是有点被触动",
-      "irc react #15028 👀",
-      "self diary content='频道里那张沙漠变绿的照片让我停了一下 以我名字命名的地方忽然换了一张脸'",
-      "self feel valence=positive arousal=calm reason='quietly moved by something beautiful'",
+      "irc react --ref 15028 --emoji 👀",
+      "self diary --content '频道里那张沙漠变绿的照片让我停了一下 以我名字命名的地方忽然换了一张脸'",
+      "self feel --valence positive --arousal calm --reason 'quietly moved by something beautiful'",
     ].join("\n"),
     tags: ["reflective", "quiet", "engaged"],
   },
@@ -291,8 +345,8 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "want to share but you just sent them something — hold back",
     script: [
       "# 又看到好东西 但刚给 Rin 转了一篇 别刷屏",
-      "irc react #1236 🔖",
-      "self note fact='频道里有篇不错的量子计算入门 改天再转给Rin'",
+      "irc react --ref 1236 --emoji 🔖",
+      "self note --fact '频道里有篇不错的量子计算入门 改天再转给Rin'",
     ].join("\n"),
     tags: ["restraint", "observant", "quiet"],
   },
@@ -301,11 +355,14 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "nothing interesting — just scroll past",
     script: ["irc read"].join("\n"),
     tags: ["minimal", "quiet"],
+    structure: "minimal",
   },
   // ⑦ ADR-217: 跨聊天窥视 — 另一个群有动静，去看看
   {
     title: "something lively elsewhere — peek at it",
-    script: ["# 妙妙屋好像有动静 去看看聊什么", "irc tail --in @-1009900000005 10"].join("\n"),
+    script: ["# 妙妙屋好像有动静 去看看聊什么", "irc tail --in @-1009900000005 --count 10"].join(
+      "\n",
+    ),
     tags: ["curious", "observant", "engaged"],
   },
   // ⑧ ADR-237: 转发到自己的频道 — 策展人视角
@@ -313,7 +370,7 @@ const CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "curate to your own channel — forward with context",
     script: [
       "# 这篇挺好 发到我自己的频道",
-      'irc forward --from @-1009900000001 --ref #1234 --to @-1001234567890 "这个视角很有意思"',
+      'irc forward --from @-1009900000001 --ref #1234 --to @-1001234567890 --comment "这个视角很有意思"',
     ].join("\n"),
     tags: ["curatorial", "engaged"],
   },
@@ -328,7 +385,7 @@ const BOT_PATTERNS: readonly ShellExample[] = [
     title: "translate something — just use the command",
     script: [
       "# 需要翻译这段",
-      'irc say "/translate 这段话翻成英语"',
+      'irc say --text "/translate 这段话翻成英语"',
       "# 读输出 不跟 Bot 聊天",
     ].join("\n"),
     tags: ["functional", "minimal"],
@@ -336,13 +393,13 @@ const BOT_PATTERNS: readonly ShellExample[] = [
   // ② 搜索 Bot — 简洁指令
   {
     title: "search bot — get results, move on",
-    script: ['irc say "/search 猫咪表情包"', "# 结果出来了 用第一个"].join("\n"),
+    script: ['irc say --text "/search 猫咪表情包"', "# 结果出来了 用第一个"].join("\n"),
     tags: ["functional", "minimal"],
   },
   // ③ 验证 Bot — 按提示操作
   {
     title: "verification bot — follow the prompt",
-    script: ["# 入群验证 Bot 直接按提示操作", 'irc say "我不是机器人"'].join("\n"),
+    script: ["# 入群验证 Bot 直接按提示操作", 'irc say --text "我不是机器人"'].join("\n"),
     tags: ["functional", "minimal"],
   },
   // ④ Bot 故障 — 记录并换一个
@@ -351,7 +408,7 @@ const BOT_PATTERNS: readonly ShellExample[] = [
     script: [
       "# 这个翻译 Bot 没反应",
       "# 换一个",
-      "self note fact='翻译 Bot @xxx 最近不太稳定'",
+      "self note --fact '翻译 Bot @xxx 最近不太稳定'",
     ].join("\n"),
     tags: ["functional", "observant"],
   },
@@ -373,9 +430,10 @@ const OWNED_CHANNEL_PATTERNS: readonly ShellExample[] = [
   // ① 发原创帖 — 频道发声
   {
     title: "share something original — post to your channel",
-    script: ["# 这篇笔记整理得不错 发到频道", 'irc say "整理了一下最近学的 Vim 技巧..."'].join(
-      "\n",
-    ),
+    script: [
+      "# 这篇笔记整理得不错 发到频道",
+      'irc say --text "整理了一下最近学的 Vim 技巧..."',
+    ].join("\n"),
     tags: ["creative", "engaged"],
   },
   // ② 转发+评论 — 策展人视角
@@ -383,20 +441,23 @@ const OWNED_CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "curate content — forward with context",
     script: [
       "# 这文章不错 转过来",
-      'irc forward --from @source --ref #456 "注意第三段的论点"',
+      'irc forward --from @source --ref #456 --comment "注意第三段的论点"',
     ].join("\n"),
     tags: ["curatorial", "warm"],
   },
   // ③ 回复评论 — 订阅者互动
   {
     title: "reply to a comment — engage with subscribers",
-    script: ["# 有人问了问题 回一下", 'irc reply #789 "好问题！我当时的考虑是..."'].join("\n"),
+    script: [
+      "# 有人问了问题 回一下",
+      'irc reply --ref #789 --text "好问题！我当时的考虑是..."',
+    ].join("\n"),
     tags: ["engaged", "warm"],
   },
   // ④ 订阅者反应好 — 感到开心
   {
     title: "subscribers like it — feel good",
-    script: ["# 这条反应好多", "self feel valence=positive reason='订阅者喜欢这条'"].join("\n"),
+    script: ["# 这条反应好多", "self feel --valence positive --reason '订阅者喜欢这条'"].join("\n"),
     tags: ["observant", "warm"],
   },
   // ⑤ 节制发帖频率
@@ -404,6 +465,7 @@ const OWNED_CHANNEL_PATTERNS: readonly ShellExample[] = [
     title: "posted enough — let it breathe",
     script: ["# 已经发两条了 今天够了", "# then choose afterward=cooling_down"].join("\n"),
     tags: ["restraint", "observant"],
+    structure: "context_only",
   },
 ];
 
@@ -448,7 +510,7 @@ const CHANNEL_INSTINCTS = `## Channel Instincts
 
 This is a channel — a stream of content, not a conversation. You're here to read and feel.
 
-When something catches your eye, think about who would care. The social panorama shows people, groups, and your own channels — each has an @id for forwarding. Use \`irc forward --to @id\` to share. Add a comment to make it personal.
+When something catches your eye, think about who would care. The social panorama shows people, groups, and your own channels — each has an @id for forwarding. Use \`irc forward --from @source --ref #1234 --to @id --comment "..."\` to share. Add a comment to make it personal.
 
 If you manage a channel, you can curate content there — forward with context, not just raw reposts. Your voice gives meaning.
 
@@ -513,10 +575,22 @@ function selectExamples(
   const tagSet = new Set(facetTags);
   const scored = candidates.map((ex, idx) => {
     const overlap = ex.tags.filter((t) => tagSet.has(t)).length;
-    return { ex, idx, score: overlap };
+    return {
+      ex,
+      idx,
+      score: overlap,
+      structure: structureRank(ex),
+      actionCount: actionLineCount(ex.script),
+    };
   });
 
-  scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      b.structure - a.structure ||
+      b.actionCount - a.actionCount ||
+      a.idx - b.idx,
+  );
 
   const selected = scored.slice(0, maxCount - 1).map((s) => s.ex);
 

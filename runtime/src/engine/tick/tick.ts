@@ -106,11 +106,9 @@ export async function tick(
       observations: board.observations,
       round,
     };
-    const { system, user } = await (deps.buildPrompt ?? buildTickPrompt)(
-      board,
-      allTools,
-      promptCtx,
-    );
+    const { system, user } = deps.buildPrompt
+      ? await deps.buildPrompt(board, allTools, promptCtx)
+      : await buildTickPrompt(board, promptCtx);
 
     // ── LLM 调用 ──
     const execResult = await deps.callLLM(
@@ -151,10 +149,15 @@ export async function tick(
       execution: {
         afterward: execResult.afterward,
         toolCallCount: execResult.toolCallCount,
+        assistantTurnCount: execResult.assistantTurnCount,
+        bashCallCount: execResult.bashCallCount,
+        signalCallCount: execResult.signalCallCount,
         budgetExhausted: execResult.budgetExhausted,
+        transcript: execResult.transcript,
         commandOutput: execResult.commandOutput,
         thinks: execResult.thinks,
         queryLogs: execResult.queryLogs,
+        instructionErrors: execResult.instructionErrors,
         errors: execResult.errors,
       },
     });
@@ -183,7 +186,13 @@ export async function tick(
           naturalErrors.push("找不到这个目标");
         } else if (e.includes("invalid target")) {
           naturalErrors.push("不知道那是谁");
-        } else if (e.includes("unexpected extra argument") || e.includes("expected key=value")) {
+        } else if (e.includes("Missing required argument")) {
+          naturalErrors.push("命令缺了必要参数");
+        } else if (
+          e.includes("unexpected extra argument") ||
+          e.includes("expected key=value") ||
+          e.includes("Unknown option")
+        ) {
           naturalErrors.push("命令好像写错了");
         } else if (e.includes("contact not found")) {
           naturalErrors.push("通讯录里没有这个人");

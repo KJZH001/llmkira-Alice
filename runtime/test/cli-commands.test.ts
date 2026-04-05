@@ -261,7 +261,7 @@ describe("replyCommand", () => {
 
     const result = await replyCommand(ctx, {
       in: undefined,
-      msgId: "456",
+      ref: "456",
       text: "reply text",
     });
 
@@ -278,7 +278,7 @@ describe("reactCommand", () => {
 
     const result = await reactCommand(ctx, {
       in: undefined,
-      msgId: "123",
+      ref: "123",
       emoji: "👍",
     });
 
@@ -415,7 +415,7 @@ describe("whoisCommand", () => {
     // 不应抛出 TypeError: targets.join is not a function
   });
 
-  it("handles string[] target (multiple words joined)", async () => {
+  it("handles string target with spaces", async () => {
     const responses = new Map([
       ['POST:/resolve/name:{"name":"Test User Name"}', { result: { telegramId: 888 } }],
       [
@@ -430,7 +430,7 @@ describe("whoisCommand", () => {
 
     const result = await whoisCommand(ctx, {
       in: undefined,
-      target: ["Test", "User", "Name"], // string[] — 多参数合并
+      target: "Test User Name",
     });
 
     expect(result.output).toBeDefined();

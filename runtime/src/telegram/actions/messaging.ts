@@ -21,7 +21,7 @@ export const messagingActions: TelegramActionDef[] = [
     category: "messaging",
     description: ["Send a text message to a chat."],
     usageHint:
-      "For shell-native chat flows prefer `irc say ...` in the script path. Supports @mentions via mentions parameter.",
+      "For shell-native chat flows prefer `irc say --text ...` in the script path. Supports @mentions via mentions parameter.",
     params: z.object({
       chatId: z.number().describe("Target chat"),
       text: z.string().describe("Message text"),

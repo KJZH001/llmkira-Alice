@@ -6,7 +6,6 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  getKnownCommands,
   registerKnownCommands,
   resetKnownCommands,
   validateScript,
@@ -20,7 +19,7 @@ describe("validateScript", () => {
   // ── bash -n 语法检查 ────────────────────────────────────────────────
 
   it("有效脚本 → valid", () => {
-    const result = validateScript("# 思考\nirc say hello");
+    const result = validateScript('# 思考\nirc say --text "hello"');
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -46,7 +45,7 @@ describe("validateScript", () => {
   // ── 命令名校验 ──────────────────────────────────────────────────────
 
   it("已知命令 → valid", () => {
-    const result = validateScript("irc say hello\nself feel valence=positive");
+    const result = validateScript('irc say --text "hello"\nself feel --valence positive');
     expect(result.valid).toBe(true);
   });
 
@@ -57,7 +56,7 @@ describe("validateScript", () => {
   });
 
   it("变量赋值 → 跳过（不是命令）", () => {
-    const result = validateScript("recent=$(irc tail 5)\nirc say hello");
+    const result = validateScript('recent=$(irc tail --count 5)\nirc say --text "hello"');
     expect(result.valid).toBe(true);
   });
 
@@ -69,10 +68,7 @@ describe("validateScript", () => {
 
   // ── 模糊匹配 ────────────────────────────────────────────────────────
 
-  it("拼写错误 → did you mean 建议", () => {
-    const result = validateScript("irc stikcer happy");
-    // 'irc' 本身是已知的，但 'irc stikcer' 整行首 token 是 'irc'
-    // 所以这个测试用一个不存在的首命令
+  it("顶级命令拼写错误 → did you mean 建议", () => {
     const result2 = validateScript("slef feel valence=positive");
     expect(result2.valid).toBe(false);
     expect(result2.errors[0].message).toContain("did you mean 'self'");

@@ -46,41 +46,31 @@ export function parseKeyValueArgs(args: string[]): Record<string, unknown> {
   while (i < args.length) {
     const arg = args[i];
 
-    // 格式 1: --key value（LLM 更自然的写法）
     if (arg.startsWith("--")) {
-      const key = arg.slice(2);
-      // 下一个参数是值（如果存在且不是另一个 flag）
-      if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-        body[key] = parseCliValue(args[i + 1]);
-        i += 2;
-        continue;
-      } else {
-        // --flag 无值 → true
-        body[key] = true;
+      const eq = arg.indexOf("=");
+      if (eq > 2) {
+        const key = arg.slice(2, eq);
+        const value = arg.slice(eq + 1);
+        body[key] = parseCliValue(value);
         i++;
         continue;
       }
-    }
 
-    // 格式 2: key=value（紧凑写法）
-    const eq = arg.indexOf("=");
-    if (eq > 0) {
-      const key = arg.slice(0, eq);
-      const value = arg.slice(eq + 1);
-      body[key] = parseCliValue(value);
+      // 下一个参数是值（除非它以 -- 开头，那是另一个 flag）
+      // 单 - 后跟数字（如 -1009900000001）是合法值（负数 Telegram ID）
+      if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+        body[arg.slice(2)] = parseCliValue(args[i + 1]);
+        i += 2;
+        continue;
+      }
+
+      // --flag 无值 → true（布尔标志）
+      body[arg.slice(2)] = true;
       i++;
       continue;
     }
 
-    // 格式 3: 单独的 key（无值）→ 下一个参数是值
-    // e.g. `count 20` → { count: 20 }
-    if (i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].includes("=")) {
-      body[arg] = parseCliValue(args[i + 1]);
-      i += 2;
-      continue;
-    }
-
-    throw new Error(`expected key=value or --key value, got "${arg}"`);
+    throw new Error(`unknown argument "${arg}". Use --key value format.`);
   }
 
   return body;

@@ -202,19 +202,58 @@ The whole system runs on a tick loop. Every tick, the pressure field evolves. Wh
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LlmKira/alice/main/runtime/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/LlmKira/Alice/main/runtime/install.sh | sh
 ```
 
-Requires: Go 1.22+ or Docker (for compilation), plus Node.js 22+, SQLite, and Docker (for runtime).
+Requires: Node.js 22+, `pnpm`, SQLite, Docker, and either Go 1.22+ or Docker for the initial binary build.
+
+The installer now builds both kinds of runtime executables:
+
+- Go binaries such as `alice`, `weather`, `music`
+- system-bin commands such as `irc`, `self`, `alice-pkg`
 
 After installation:
 
 ```bash
 mkdir ~/alice && cd ~/alice
 alice init     # Create .env template
-vim .env       # Add Telegram API credentials and LLM API key
+vim .env       # Fill TELEGRAM_* and LLM_* fields
 alice doctor   # Verify environment
 alice run      # Start (foreground, Ctrl+C to stop)
+```
+
+If you deploy from source instead of using the installer, do not skip `pnpm run build:bin`:
+
+```bash
+git clone https://github.com/LlmKira/Alice.git
+cd Alice
+pnpm install --frozen-lockfile
+cd runtime
+pnpm run build:bin
+```
+
+Then verify the required system-bin commands exist before starting:
+
+```bash
+test -x dist/bin/irc
+test -x dist/bin/self
+test -x dist/bin/alice-pkg
+```
+
+If `alice doctor` reports missing `System bin`, or you see errors like `irc: not found`, the runtime was started without those compiled entries. Re-run `pnpm run build:bin` from `runtime/` or re-run the installer.
+
+For the full deployment and troubleshooting guide, see [`runtime/README.md`](./runtime/README.md) and [`runtime/deploy/systemd/README.md`](./runtime/deploy/systemd/README.md).
+
+Required `.env` fields for first login:
+
+```bash
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=abcdef123456
+TELEGRAM_PHONE=+8613800138000
+
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=sk-xxx
+LLM_MODEL=gpt-4o
 ```
 
 ### Multi-Instance
@@ -249,7 +288,7 @@ cd simulation && uv sync && uv run python run_all.py
 
 ### Prerequisites
 
-- Node.js 20+ / pnpm
+- Node.js 22+ / pnpm
 - Python 3.13+ / [uv](https://github.com/astral-sh/uv) + [pdm](https://pdm-project.org/) (auxiliary services)
 - A Telegram account (userbot, not bot API)
 - An OpenAI-compatible LLM endpoint

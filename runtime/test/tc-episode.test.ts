@@ -120,7 +120,7 @@ describe("ADR-232 TC Episode", () => {
 
   it("done 直接返回 terminal：不触发续轮", async () => {
     const board = makeBoard();
-    const deps = makeDeps([{ script: "irc say '你好'", afterward: "done" }]);
+    const deps = makeDeps([{ script: "irc say --text '你好'", afterward: "done" }]);
 
     const result = await tick(board, [], deps, BASE_CTX);
 
@@ -130,7 +130,9 @@ describe("ADR-232 TC Episode", () => {
 
   it("waiting_reply 直接返回对应 outcome：不触发续轮", async () => {
     const board = makeBoard();
-    const deps = makeDeps([{ script: "irc say '你今天怎么样？'", afterward: "waiting_reply" }]);
+    const deps = makeDeps([
+      { script: "irc say --text '你今天怎么样？'", afterward: "waiting_reply" },
+    ]);
 
     const result = await tick(board, [], deps, BASE_CTX);
 
@@ -140,7 +142,7 @@ describe("ADR-232 TC Episode", () => {
 
   it("fed_up 直接返回对应 outcome", async () => {
     const board = makeBoard();
-    const deps = makeDeps([{ script: "irc say '我先走了'", afterward: "fed_up" }]);
+    const deps = makeDeps([{ script: "irc say --text '我先走了'", afterward: "fed_up" }]);
 
     const result = await tick(board, [], deps, BASE_CTX);
 
@@ -149,7 +151,7 @@ describe("ADR-232 TC Episode", () => {
 
   it("cooling_down 直接返回对应 outcome", async () => {
     const board = makeBoard();
-    const deps = makeDeps([{ script: "irc say '休息一下'", afterward: "cooling_down" }]);
+    const deps = makeDeps([{ script: "irc say --text '休息一下'", afterward: "cooling_down" }]);
 
     const result = await tick(board, [], deps, BASE_CTX);
 

@@ -2,7 +2,7 @@
  * self — 统一认知 CLI（感知 + 记忆 + 观察 + 查询）。
  *
  * ADR-217: 合并原 engine CLI。所有非 irc 操作统一走 self。
- * 路由：`self <kebab-cmd> [key=value ...]` → POST /cmd/<snake_cmd>
+ * 路由：`self <kebab-cmd> [--key value ...]` → POST /cmd/<snake_cmd>
  * Engine 侧自动区分 query 和 instruction——CLI 无需关心。
  *
  * @see docs/adr/235-cli-human-readable-output.md
@@ -28,7 +28,7 @@ function toSnake(kebab: string): string {
  */
 async function printHelp(): Promise<void> {
   console.log("self — perception, memory, and bookkeeping\n");
-  console.log("USAGE: self <command> [key=value ...]\n");
+  console.log("USAGE: self <command> [--key value ...]\n");
 
   try {
     const response = (await enginePostJson("/meta/commands", {})) as {
@@ -52,7 +52,9 @@ async function printHelp(): Promise<void> {
 
     const renderCmd = (c: (typeof cmds)[0]) => {
       const cliName = c.name.replace(/_/g, "-");
-      const params = c.params.map((p) => (p.optional ? `[${p.name}=...]` : `${p.name}=...`)).join(" ");
+      const params = c.params
+        .map((p) => (p.optional ? `[--${p.name} <value>]` : `--${p.name} <value>`))
+        .join(" ");
       const sig = params ? `${cliName} ${params}` : cliName;
       console.log(`  ${sig.padEnd(44)} ${c.description}`);
     };
@@ -102,7 +104,7 @@ const main = defineCommand({
     // kebab→snake：`begin-topic` → `begin_topic`
     const snakeCmd = toSnake(cmd);
 
-    // rawArgs 第一个是 command，其余是 key=value 参数
+    // rawArgs 第一个是 command，其余是 --key value 参数
     const kvArgs = cleaned.slice(1).filter((a) => a !== "--help" && a !== "-h");
     const body = parseKeyValueArgs(kvArgs);
 

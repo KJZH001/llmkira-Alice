@@ -105,17 +105,26 @@ describe("command catalog", () => {
 });
 
 describe("generateShellManual", () => {
-  it("renders a live command catalog instead of a hardcoded command block", async () => {
+  it("renders native citty synopsis for irc and alice-pkg", async () => {
     const { executeDockerCommand } = await import("../src/skills/backends/docker.js");
     const mockDocker = executeDockerCommand as ReturnType<typeof vi.fn>;
-    // 模拟容器探测返回系统命令
     mockDocker.mockResolvedValue("irc\nself\nengine\nask\nalice-pkg\n");
+
     const manual = await generateShellManual([]);
-    expect(manual).toContain("## Command Catalog");
-    expect(manual).toContain("This catalog is fetched through a live runtime command probe");
-    expect(manual).toContain("`irc`");
-    // ADR-213: ctl 已删除，流控通过 tool calling flow 参数
-    expect(manual).not.toContain("`ctl`");
+
+    expect(manual).toContain("## irc");
+    expect(manual).toContain(
+      "irc say [--in <chatId>] --text <message> [--resolve-thread <threadId>]",
+    );
+    expect(manual).toContain("irc join --target <target>");
+    expect(manual).toContain(
+      "irc forward --from <chatId> --ref <msgId> [--to <chatId>] [--comment <message>]",
+    );
+    expect(manual).not.toContain("irc whoami");
+    expect(manual).toContain("## alice-pkg");
+    expect(manual).toContain("alice-pkg install --name <skill>");
+    expect(manual).toContain("alice-pkg list");
+    expect(manual).not.toContain("## Command Catalog");
     expect(manual).not.toContain("## Core Commands");
   });
 });

@@ -20,6 +20,24 @@ describe("resolveTarget", () => {
     expect(await resolveTarget("123")).toBe(123);
   });
 
+  it("resolves current-chat aliases via ALICE_CTX_TARGET_CHAT", async () => {
+    const previous = process.env.ALICE_CTX_TARGET_CHAT;
+    process.env.ALICE_CTX_TARGET_CHAT = "456";
+
+    try {
+      await expect(resolveTarget("0")).resolves.toBe(456);
+      await expect(resolveTarget("me")).resolves.toBe(456);
+      await expect(resolveTarget("@me")).resolves.toBe(456);
+      await expect(resolveTarget("~me")).resolves.toBe(456);
+    } finally {
+      if (previous == null) {
+        delete process.env.ALICE_CTX_TARGET_CHAT;
+      } else {
+        process.env.ALICE_CTX_TARGET_CHAT = previous;
+      }
+    }
+  });
+
   it("throws when no target provided", async () => {
     await expect(resolveTarget()).rejects.toThrow("missing target");
   });

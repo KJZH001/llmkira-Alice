@@ -108,8 +108,14 @@ export interface EngagementSlot {
  */
 export async function initSlot(ctx: ActContext, item: ActionQueueItem): Promise<EngagementSlot> {
   const targetChatId = item.target ? extractNumericId(item.target) : null;
+  const targetChatType =
+    item.target && ctx.G.has(item.target)
+      ? (ctx.G.getChannel(item.target).chat_type ?? undefined)
+      : undefined;
   const recentMessages = targetChatId
-    ? await fetchRecentMessages(ctx.client, targetChatId, ctx.config)
+    ? await fetchRecentMessages(ctx.client, targetChatId, ctx.config, {
+        chatType: targetChatType,
+      })
     : [];
 
   const resolved = item.target ? resolveTarget(ctx.G, item.target) : null;
@@ -128,11 +134,7 @@ export async function initSlot(ctx: ActContext, item: ActionQueueItem): Promise<
   }
 
   // 群聊 subcycle 上限收束：群聊每次 engagement 最多 2 条消息（私聊保持 5）
-  const chatType =
-    item.target && ctx.G.has(item.target)
-      ? (ctx.G.getChannel(item.target).chat_type ?? "private")
-      : "private";
-  const maxSubcycles = ChatTarget.isGroupChat(chatType) ? 2 : undefined;
+  const maxSubcycles = ChatTarget.isGroupChat(targetChatType ?? "private") ? 2 : undefined;
 
   return {
     item,

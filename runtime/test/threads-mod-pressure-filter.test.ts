@@ -1,179 +1,126 @@
 /**
- * ADR-241: 线程压力阈值过滤测试。
+ * ADR-241: 线程相关性衰减 + 压力阈值过滤测试。
  *
  * 验证:
- * - T1: 压力阈值常量存在
- * - T2: stale 标记阈值常量存在
- * - T3: dormant 状态在 format() 中正确处理
+ * - threadRelevance 半衰期衰减行为
+ * - open_topics format() 的 dormant/urgency 标签
  *
  * @see docs/adr/241-thread-weight-decay.md
  */
 import { describe, expect, it } from "vitest";
+import { threadRelevance } from "../src/mods/threads.mod.js";
 import { threadsMod } from "../src/mods/threads.mod.js";
 
-describe("ADR-241: Thread Pressure Filter Constants", () => {
-  it("T1: PRESSURE_THRESHOLD 常量值为 0.15", () => {
-    // 验证常量值正确
-    // 由于常量在闭包内，我们通过测试 format() 的输出来间接验证
-    const testRows = [
-      {
-        id: 1,
-        title: "测试线程",
-        status: "open",
-        weight: "minor",
-        pressure: 0.1, // 低于阈值
-      },
-    ];
+// -- 常量 --
+const RELEVANCE_THRESHOLD = 0.15;
+const DAY_MS = 24 * 3600_000;
 
-    const formatted = threadsMod.queries["open_topics"].format(testRows);
-    expect(formatted[0]).toContain("dormant");
+function getOpenTopicsFormat(): (result: unknown) => string[] {
+  const query = threadsMod.queries?.open_topics;
+  if (!query) {
+    throw new Error("threadsMod open_topics query is missing");
+  }
+  if (!query.format) {
+    throw new Error("threadsMod open_topics format() is missing");
+  }
+  return query.format;
+}
+
+describe("ADR-241: threadRelevance 半衰期衰减", () => {
+  const now = Date.now();
+
+  it("刚创建的线程 relevance = 基础权重", () => {
+    expect(threadRelevance(now, null, "minor", now)).toBeCloseTo(0.5, 2);
+    expect(threadRelevance(now, null, "major", now)).toBeCloseTo(2.0, 2);
+    expect(threadRelevance(now, null, "critical", now)).toBeCloseTo(4.0, 2);
   });
 
-  it("T2: STALE_THRESHOLD 为 PRESSURE_THRESHOLD 的 1.5 倍", () => {
-    // STALE_THRESHOLD 应该是 0.225 (0.15 * 1.5)
-    // 通过测试 stale 标记逻辑间接验证
-    const staleRow = {
-      id: 2,
-      title: "接近阈值线程",
-      status: "open",
-      weight: "minor",
-      pressure: 0.2, // 接近阈值 (0.15 < 0.2 < 0.225)
-    };
-
-    const dormantRow = {
-      id: 3,
-      title: "低于阈值线程",
-      status: "open",
-      weight: "minor",
-      pressure: 0.1, // 低于阈值
-    };
-
-    const staleFormatted = threadsMod.queries["open_topics"].format([staleRow]);
-    const dormantFormatted = threadsMod.queries["open_topics"].format([dormantRow]);
-
-    // 0.2 > 0.15 应该显示 low/moderate/high，不是 dormant
-    expect(staleFormatted[0]).not.toContain("dormant");
-    // 0.1 < 0.15 应该显示 dormant
-    expect(dormantFormatted[0]).toContain("dormant");
+  it("minor 线程 7 天后 relevance ≈ 0.25（半衰期）", () => {
+    const created = now - 7 * DAY_MS;
+    const rel = threadRelevance(created, null, "minor", now);
+    expect(rel).toBeCloseTo(0.25, 1);
   });
 
-  it("T3: dormant 状态正确显示在 open_topics 中", () => {
-    const rows = [
-      {
-        id: 1,
-        title: "正常线程",
-        status: "open",
-        weight: "minor",
-        pressure: 0.5,
-      },
-      {
-        id: 2,
-        title: "沉睡线程",
-        status: "open",
-        weight: "minor",
-        pressure: 0.1,
-      },
-      {
-        id: 3,
-        title: "高优先级线程",
-        status: "open",
-        weight: "major",
-        pressure: 2.0,
-      },
-    ];
-
-    const formatted = threadsMod.queries["open_topics"].format(rows);
-
-    // 正常线程显示 low/moderate/high
-    expect(formatted[0]).toContain("low");
-    expect(formatted[0]).not.toContain("dormant");
-
-    // 沉睡线程显示 dormant
-    expect(formatted[1]).toContain("dormant");
-
-    // 高优先级线程显示 high urgency
-    expect(formatted[2]).toContain("high urgency");
+  it("minor 线程 14 天后 relevance ≈ 0.125（两个半衰期），低于阈值", () => {
+    const created = now - 14 * DAY_MS;
+    const rel = threadRelevance(created, null, "minor", now);
+    expect(rel).toBeCloseTo(0.125, 1);
+    expect(rel).toBeLessThan(RELEVANCE_THRESHOLD);
   });
 
-  it("T4: pressure 为 null 时不崩溃", () => {
-    const row = {
-      id: 1,
-      title: "无压力线程",
-      status: "open",
-      weight: "minor",
-      pressure: null,
-    };
+  it("major 线程 14 天后 relevance ≈ 0.5（两个半衰期），仍高于阈值", () => {
+    const created = now - 14 * DAY_MS;
+    const rel = threadRelevance(created, null, "major", now);
+    // major w=2.0, 14天=2个半衰期: 2.0 × 2^(-2) = 0.5
+    expect(rel).toBeCloseTo(0.5, 1);
+    expect(rel).toBeGreaterThan(RELEVANCE_THRESHOLD);
+  });
 
-    const formatted = threadsMod.queries["open_topics"].format([row]);
+  it("有 beat 活动的线程从 lastBeatMs 开始衰减", () => {
+    const created = now - 30 * DAY_MS;
+    const lastBeat = now - 1 * DAY_MS; // 1 天前有活动
+    const rel = threadRelevance(created, lastBeat, "minor", now);
+    // 应该接近基础权重（只衰减了 1 天）
+    expect(rel).toBeGreaterThan(0.45);
+  });
 
-    // 应该正确处理 null pressure
-    expect(formatted).toBeDefined();
-    expect(formatted.length).toBe(1);
+  it("trivial 线程衰减最快", () => {
+    const created = now - 3 * DAY_MS;
+    const rel = threadRelevance(created, null, "trivial", now);
+    // trivial w=0.2，3 天后 ≈ 0.2 * 2^(-3/7) ≈ 0.148
+    expect(rel).toBeLessThan(RELEVANCE_THRESHOLD);
   });
 });
 
-describe("ADR-241: open_topics format() 边界情况", () => {
-  it("T5: 空数组返回 '(no open topics)'", () => {
-    const formatted = threadsMod.queries["open_topics"].format([]);
-    expect(formatted).toEqual(["(no open topics)"]);
+describe("ADR-241: open_topics format() urgency 标签", () => {
+  const fmt = getOpenTopicsFormat();
+
+  it("dormant: relevance < RELEVANCE_THRESHOLD", () => {
+    const rows = [{ id: 1, title: "旧线程", status: "open", weight: "minor", pressure: 5.0, relevance: 0.1 }];
+    const result = fmt(rows);
+    expect(result[0]).toContain("dormant");
   });
 
-  it("T6: 压力值 0.15 (边界值) 应该显示 low", () => {
-    const row = {
-      id: 1,
-      title: "边界线程",
-      status: "open",
-      weight: "minor",
-      pressure: 0.15, // 等于 PRESSURE_THRESHOLD
-    };
-
-    const formatted = threadsMod.queries["open_topics"].format([row]);
-
-    // 0.15 >= 0.15，应该显示 low (不是 dormant)
-    expect(formatted[0]).toContain("low");
-    expect(formatted[0]).not.toContain("dormant");
+  it("low: relevance >= threshold, pressure <= 0.5", () => {
+    const rows = [{ id: 1, title: "正常线程", status: "open", weight: "minor", pressure: 0.3, relevance: 0.5 }];
+    const result = fmt(rows);
+    expect(result[0]).toContain("low");
+    expect(result[0]).not.toContain("dormant");
   });
 
-  it("T7: 压力值 0.149 (略低于阈值) 应该显示 dormant", () => {
-    const row = {
-      id: 1,
-      title: "略低于阈值线程",
-      status: "open",
-      weight: "minor",
-      pressure: 0.149, // 略低于 PRESSURE_THRESHOLD (0.15)
-    };
-
-    const formatted = threadsMod.queries["open_topics"].format([row]);
-
-    // 0.149 < 0.15，应该显示 dormant
-    expect(formatted[0]).toContain("dormant");
+  it("moderate: pressure > 0.5", () => {
+    const rows = [{ id: 1, title: "中等", status: "open", weight: "minor", pressure: 0.8, relevance: 0.5 }];
+    const result = fmt(rows);
+    expect(result[0]).toContain("moderate");
   });
 
-  it("T8: high urgency 压力值正确显示", () => {
-    const row = {
-      id: 1,
-      title: "高紧急度线程",
-      status: "open",
-      weight: "critical",
-      pressure: 4.0, // critical 基础值
-    };
-
-    const formatted = threadsMod.queries["open_topics"].format([row]);
-
-    expect(formatted[0]).toContain("high urgency");
+  it("high urgency: pressure > 1.0", () => {
+    const rows = [{ id: 1, title: "紧急", status: "open", weight: "major", pressure: 2.0, relevance: 2.0 }];
+    const result = fmt(rows);
+    expect(result[0]).toContain("high urgency");
   });
 
-  it("T9: moderate urgency 压力值正确显示", () => {
-    const row = {
-      id: 1,
-      title: "中等紧急度线程",
-      status: "open",
-      weight: "major",
-      pressure: 1.0, // 正好等于边界
-    };
+  it("空数组返回 '(no open topics)'", () => {
+    expect(fmt([])).toEqual(["(no open topics)"]);
+  });
 
-    const formatted = threadsMod.queries["open_topics"].format([row]);
+  it("边界: relevance 正好等于 RELEVANCE_THRESHOLD 不是 dormant", () => {
+    const rows = [{ id: 1, title: "边界", status: "open", weight: "minor", pressure: 0.3, relevance: 0.15 }];
+    const result = fmt(rows);
+    expect(result[0]).toContain("low");
+    expect(result[0]).not.toContain("dormant");
+  });
 
-    expect(formatted[0]).toContain("moderate");
+  it("旧格式兼容: 无 relevance 字段时回退到 pressure", () => {
+    const rows = [{ id: 1, title: "旧数据", status: "open", weight: "minor", pressure: 0.05 }];
+    const result = fmt(rows);
+    expect(result[0]).toContain("dormant");
+  });
+
+  it("pressure 为 null 时不崩溃", () => {
+    const rows = [{ id: 1, title: "无数据", status: "open", weight: "minor", pressure: null, relevance: null }];
+    const result = fmt(rows);
+    expect(result).toBeDefined();
+    expect(result.length).toBe(1);
   });
 });

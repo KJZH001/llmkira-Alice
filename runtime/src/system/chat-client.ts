@@ -4,24 +4,25 @@
  * ADR-238: 简化为纯工具函数，命令定义在 irc.ts 中。
  *
  * 命令签名设计（IRC 直觉 + POSIX 严格）：
- *   irc say [--in TARGET] <text>
- *   irc reply [--in TARGET] <msgId> <text>
- *   irc react [--in TARGET] <msgId> <emoji>
- *   irc sticker [--in TARGET] <keyword>
+ *   irc say [--in TARGET] --text <text>
+ *   irc reply [--in TARGET] --ref <msgId> --text <text>
+ *   irc react [--in TARGET] --ref <msgId> --emoji <emoji>
+ *   irc sticker [--in TARGET] --keyword <keyword>
  *   irc read [--in TARGET]
- *   irc tail [--in TARGET] [count]
- *   irc whois [--in TARGET] [@ID]
+ *   irc tail [--in TARGET] [--count <number>]
+ *   irc whois [--in TARGET] [--target <contact>]
  *   irc motd [--in TARGET]
  *   irc threads
  *   irc topic [--in TARGET]
- *   irc join <target>
+ *   irc join --target <target>
  *   irc leave [--in TARGET]
- *   irc forward --from SOURCE --ref <msgId> --to TARGET [comment]
+ *   irc forward --from SOURCE --ref <msgId> [--to TARGET] [--comment <text>]
  *
  * --in TARGET = "在哪个聊天室操作"（空间介词，IRC "I'm in #channel"）。
  * --to TARGET 仅用于 forward（方向介词，"转发到"）。
  * TARGET 支持 @ID（聊天平台惯例）、~ID（向后兼容）和裸数字。
  * 省略时自动从 ALICE_CTX_TARGET_CHAT 环境变量获取当前聊天上下文。
+ * 兼容别名：`0` / `me` / `@me` / `~me` 也解析为当前聊天。
  *
  * @see docs/adr/238-citty-native-cli-redesign.md
  */
@@ -29,6 +30,8 @@
 import { enginePost } from "../../skills/_lib/engine-client.js";
 
 // ── 共享解析工具 ──
+
+const CURRENT_CHAT_ALIASES = new Set(["0", "me", "@me", "~me"]);
 
 /**
  * 解析 --in TARGET（或 forward 的 --to/--from TARGET）。
@@ -40,7 +43,10 @@ import { enginePost } from "../../skills/_lib/engine-client.js";
  * 省略时自动从 ALICE_CTX_TARGET_CHAT 环境变量获取当前聊天上下文。
  */
 export async function resolveTarget(raw?: string): Promise<number> {
-  const effective = raw || process.env.ALICE_CTX_TARGET_CHAT;
+  const trimmed = raw?.trim();
+  const currentChat = process.env.ALICE_CTX_TARGET_CHAT?.trim();
+  const useCurrentChat = trimmed == null || trimmed === "" || CURRENT_CHAT_ALIASES.has(trimmed);
+  const effective = useCurrentChat ? currentChat : trimmed;
   if (!effective) {
     throw new Error("missing target: use --in @ID");
   }

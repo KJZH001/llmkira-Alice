@@ -13,7 +13,12 @@ import { defineAction } from "../action-builder.js";
 import { getStickerSetContract, listStickersContract } from "../action-contracts.js";
 import type { TelegramActionDef } from "../action-types.js";
 import { getInstalledStickers, getStickerSet, sendSticker, sendText } from "../actions.js";
-import { getAvailableKeywords, resolveByEmoji, resolveLabel, KEYWORD_TO_EMOJI } from "../apps/sticker-palette.js";
+import {
+  getAvailableKeywords,
+  resolveByEmoji,
+  resolveLabel,
+  KEYWORD_TO_EMOJI,
+} from "../apps/sticker-palette.js";
 import { cacheOutgoingMsg } from "../events.js";
 
 export const stickerActions: TelegramActionDef[] = [
@@ -125,13 +130,13 @@ export const stickerActions: TelegramActionDef[] = [
     category: "sticker",
     description: ["List installed sticker sets. Results available in the next round ."],
     usageHint:
-      "Browse installed sticker sets. Usually not needed — just use `irc sticker <keyword>` directly.",
+      "Browse installed sticker sets. Usually not needed — just use `irc sticker --keyword <keyword>` directly.",
     params: z.object({}),
     contract: listStickersContract,
     returnDoc: "Results available in the next round as observation (`self.installed_stickers`).",
     affordance: {
       whenToUse: "Curious about what sticker sets are installed",
-      whenNotToUse: "When sending stickers — just use `irc sticker <keyword>`",
+      whenNotToUse: "When sending stickers — just use `irc sticker --keyword <keyword>`",
       priority: "capability",
       category: "sticker",
       requires: "hasStickers",
@@ -156,7 +161,7 @@ export const stickerActions: TelegramActionDef[] = [
       "Browse a sticker set to see what's available. Results appear in the next round .",
     ],
     usageHint:
-      "Browse sticker sets to discover what's available. Usually not needed — just use `irc sticker <keyword>` directly.",
+      "Browse sticker sets to discover what's available. Usually not needed — just use `irc sticker --keyword <keyword>` directly.",
     params: z.object({
       setName: z.string().describe("Sticker set short name"),
     }),
@@ -164,7 +169,7 @@ export const stickerActions: TelegramActionDef[] = [
     returnDoc: "Results available in the next round as observation (`self.last_sticker_set`).",
     affordance: {
       whenToUse: "Browse a specific sticker set to see what's inside",
-      whenNotToUse: "When sending stickers — just use `irc sticker <keyword>`",
+      whenNotToUse: "When sending stickers — just use `irc sticker --keyword <keyword>`",
       priority: "capability",
       category: "sticker",
       requires: "hasStickers",

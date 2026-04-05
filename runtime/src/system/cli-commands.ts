@@ -84,7 +84,7 @@ export async function sayCommand(ctx: CliContext, args: SayArgs): Promise<Comman
 export interface ReplyArgs {
   json?: string;
   in?: string;
-  msgId: string;
+  ref: string;
   text: string;
 }
 
@@ -100,7 +100,7 @@ export async function replyCommand(ctx: CliContext, args: ReplyArgs): Promise<Co
   const die = makeDie(ctx.output, "irc");
 
   const chatId = await ctx.resolveTarget(args.in);
-  const replyTo = parseMsgId(args.msgId);
+  const replyTo = parseMsgId(args.ref);
   const text = args.text;
 
   if (!text.trim()) die("reply requires non-empty text");
@@ -128,7 +128,7 @@ export async function replyCommand(ctx: CliContext, args: ReplyArgs): Promise<Co
 export interface ReactArgs {
   json?: string;
   in?: string;
-  msgId: string;
+  ref: string;
   emoji: string;
 }
 
@@ -137,7 +137,7 @@ export async function reactCommand(ctx: CliContext, args: ReactArgs): Promise<Co
   const die = makeDie(ctx.output, "irc");
 
   const chatId = await ctx.resolveTarget(args.in);
-  const msgId = parseMsgId(args.msgId);
+  const msgId = parseMsgId(args.ref);
   const emoji = args.emoji;
 
   const result = await ctx.engine.post("/telegram/react", { chatId, msgId, emoji });
@@ -285,8 +285,7 @@ export async function tailCommand(ctx: CliContext, args: TailArgs): Promise<Comm
 export interface WhoisArgs {
   json?: string;
   in?: string;
-  /** citty 可能返回 string 或 string[]（即使 multiple: true） */
-  target?: string | string[];
+  target?: string;
 }
 
 /** 从 graph 属性响应中提取 value（纯函数）。 */
@@ -296,14 +295,7 @@ export function gval(res: unknown): unknown {
 
 /** whois 命令逻辑。 */
 export async function whoisCommand(ctx: CliContext, args: WhoisArgs): Promise<CommandResult> {
-  // 合并含空格的名称（defensive: citty 可能返回 string 或 string[]）
-  const targets = args.target;
-  const target =
-    typeof targets === "string"
-      ? targets.trim() || undefined
-      : Array.isArray(targets) && targets.length
-        ? targets.join(" ").trim()
-        : undefined;
+  const target = args.target?.trim() || undefined;
 
   if (target) {
     // whois NAME/@ID → 联系人画像

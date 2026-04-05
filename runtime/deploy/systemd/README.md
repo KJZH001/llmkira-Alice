@@ -1,6 +1,6 @@
 # Alice Runtime systemd deployment
 
-This unit is the host-side hardening half of ADR-207.
+This is the host-side hardening half of ADR-207.
 
 ## What it does
 
@@ -16,7 +16,7 @@ This unit is the host-side hardening half of ADR-207.
    - `WorkingDirectory=/srv/alice-telegram-bot/runtime`
    - `EnvironmentFile=-/srv/alice-telegram-bot/runtime/.env`
    - every `ReadWritePaths=/srv/alice-telegram-bot/...`
-2. Ensure Docker and gVisor are installed.
+2. Ensure Node.js 22+, `pnpm`, Docker, and optionally Go 1.22+ are installed on the host.
 3. Create the service account:
 
 ```bash
@@ -26,13 +26,53 @@ sudo usermod -aG docker alice-runtime
 
 That is the compatibility path. If you want the stricter host-side setup, point the unit at a dedicated rootless Docker socket instead of granting the service user `docker` group access.
 
-4. Install runtime dependencies in `runtime/`:
+4. Install JavaScript dependencies from the repo root with `pnpm`:
+
+```bash
+cd /srv/alice-telegram-bot
+pnpm install --frozen-lockfile
+```
+
+5. Build the required runtime binaries inside `runtime/`:
 
 ```bash
 cd /srv/alice-telegram-bot/runtime
-pnpm install --frozen-lockfile
+
+# Required system-bin commands for runtime command space
+pnpm run build:bin
+
+# Build alice CLI and Go skills
+mkdir -p dist/bin
+CGO_ENABLED=0 go build -ldflags="-s -w" -o dist/bin/alice ./cmd/alice
+for skill in cmd/skills/*/; do
+  name=$(basename "$skill")
+  CGO_ENABLED=0 go build -ldflags="-s -w" -o "dist/bin/$name" "./$skill"
+done
+```
+
+6. Build the sandbox runner image:
+
+```bash
+cd /srv/alice-telegram-bot/runtime
 pnpm docker:build-runner
 ```
+
+## Pre-flight verification
+
+Do not enable the unit until these checks pass:
+
+```bash
+cd /srv/alice-telegram-bot/runtime
+
+test -x dist/bin/alice
+test -x dist/bin/irc
+test -x dist/bin/self
+test -x dist/bin/alice-pkg
+
+ALICE_RUNTIME_DIR=/srv/alice-telegram-bot/runtime ./dist/bin/alice doctor
+```
+
+If `alice doctor` reports missing `System bin`, you skipped `pnpm run build:bin` or built in the wrong directory.
 
 ## Install
 

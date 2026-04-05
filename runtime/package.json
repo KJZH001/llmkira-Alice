@@ -40,6 +40,7 @@
     "openai": "^6.32.0",
     "sharp": "^0.34.5",
     "sqlite-better-trigram": "^0.0.5",
+    "tsx": "^4.19.0",
     "tyme4ts": "^1.4.2",
     "yaml": "^2.8.2",
     "zod": "^3.24.0"
@@ -50,7 +51,6 @@
     "@types/node": "^22.0.0",
     "drizzle-kit": "^0.30.0",
     "esbuild": "^0.27.3",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }

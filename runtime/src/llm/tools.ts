@@ -40,8 +40,8 @@ export const TOOL_BASH: OpenAI.Chat.Completions.ChatCompletionTool = {
             "Multi-line POSIX sh script. " +
             "IMPORTANT: write one command per line, separated by newlines. " +
             "Examples:\n" +
-            "  'irc tail 5'\n" +
-            "  'self feel curious\\nirc say \"hello\"'\n" +
+            "  'irc tail --count 5'\n" +
+            "  'self feel curious\\nirc say --text \"hello\"'\n" +
             "  'weather tokyo | grep -i sun'",
         },
       },
@@ -97,13 +97,16 @@ export type Afterward = "done" | "waiting_reply" | "watching" | "fed_up" | "cool
 export function extractToolUseParams(
   toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
 ): { name: string; args: Record<string, unknown> } {
+  // ChatCompletionMessageToolCall = FunctionToolCall | CustomToolCall
+  // 我们只处理 function 类型（LLM 标准 tool_use）
+  if (toolCall.type !== "function") {
+    return { name: "unknown", args: {} };
+  }
+
   try {
-    // OpenAI SDK 实际返回 { id, type, function: { name, arguments: } }
-    const fn = toolCall.function;
-    const args = JSON.parse(fn.arguments) as Record<string, unknown>;
-    return { name: fn.name, args };
+    const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+    return { name: toolCall.function.name, args };
   } catch {
-    // JSON parse 失败时提供安全的默认值
-    return { name: (fn?.name as string) ?? "unknown", args: {} };
+    return { name: toolCall.function.name, args: {} };
   }
 }

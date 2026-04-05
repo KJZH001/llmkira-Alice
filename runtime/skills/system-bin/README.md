@@ -1,13 +1,24 @@
-# Alice system commands live here.
+# Alice system-bin
 
-- `irc`: IRC-like Telegram facade for system-level chat verbs (`say`, `reply`, `react`, `read`, `tail`, `who`, `topic`, `join`, `leave`)
-- `self`: self-perception/memory commands (`feel`, `diary`, `note`) — routes to engine `self_*` instructions
-- `engine`: bridge to engine-owned write instructions (non-self_ namespace)
-- `ctl`: shell-native control flags (`expect-reply`, `stay`, `leave`, `silent`)
-- `ask`: bridge to engine-owned read queries
-- `alice-pkg`: Alice OS package manager (search, install, remove, upgrade, rollback)
+These commands are built by `pnpm run build:bin` and emitted into `runtime/dist/bin/`.
 
-System commands live beside installed app commands, but are engine-owned.
-LLM-facing names should stay close to real chat client habits (`say`, `reply`, `react`, `read`).
+Current entries:
 
-Use `<command> --help` for usage details (citty auto-generated help).
+- `irc`: IRC-like Telegram facade for chat actions such as `say`, `reply`, `react`, `read`, `tail`, `who`, `topic`, `join`, and `leave`
+- `self`: perception, memory, bookkeeping, and command/query bridge
+- `alice-pkg`: Alice OS package manager for `search`, `install`, `remove`, `upgrade`, and `rollback`
+
+## Important
+
+- `self` absorbed the old `engine` CLI. New deployments must build and ship `self`; there is no separate `engine.ts` entry in this directory anymore.
+- If runtime startup or `alice doctor` reports missing system-bin commands, rebuild them from `runtime/`:
+
+```bash
+pnpm run build:bin
+test -x dist/bin/irc
+test -x dist/bin/self
+test -x dist/bin/alice-pkg
+```
+
+System commands live beside installed app commands, but remain engine-owned.
+Use `<command> --help` for usage details.

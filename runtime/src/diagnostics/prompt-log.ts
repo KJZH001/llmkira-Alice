@@ -9,7 +9,7 @@
  * - 完整 system prompt
  * - 完整 user prompt
  * - LLM 生成的脚本（rawScript）
- * - TC 循环执行结果（afterward / tool calls / thinks / errors / command output）
+ * - TC 循环执行结果（afterward / tool calls / transcript / thinks / instructionErrors / errors / command output）
  *
  * 用途：事后诊断 prompt 工程问题——看 LLM 看到了什么、产出了什么。
  *
@@ -18,6 +18,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { TCAssistantRoundTrace } from "../engine/tick/tc-loop.js";
 import type { Afterward } from "../llm/tools.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -46,13 +47,50 @@ export interface PromptSnapshot {
   execution?: {
     afterward: Afterward;
     toolCallCount: number;
+    assistantTurnCount?: number;
+    bashCallCount?: number;
+    signalCallCount?: number;
     budgetExhausted: boolean;
+    transcript?: TCAssistantRoundTrace[];
     /** 聚合的 `$ cmd\noutput` 块（完整命令+输出对）。 */
     commandOutput: string;
     thinks: string[];
     queryLogs: Array<{ fn: string; result: string }>;
+    instructionErrors: string[];
     errors: string[];
   };
+}
+
+function renderTranscript(transcript: TCAssistantRoundTrace[]): string[] {
+  const parts: string[] = ["### Transcript", ""];
+
+  for (const round of transcript) {
+    parts.push(`#### Assistant Round ${round.round + 1}`, "");
+    parts.push(`- tool choice: ${round.toolChoice}`);
+    if (round.finishReason) {
+      parts.push(`- finish reason: ${round.finishReason}`);
+    }
+    parts.push(`- assistant text: ${round.assistantText || "(none)"}`);
+    parts.push(`- tool calls: ${round.toolCalls.length}`, "");
+
+    for (const toolCall of round.toolCalls) {
+      parts.push(`##### ${toolCall.name} #${toolCall.sequence} (\`${toolCall.toolCallId}\`)`, "");
+
+      if (toolCall.command) {
+        parts.push("```sh", toolCall.command, "```", "");
+      } else if (toolCall.afterward) {
+        parts.push(`- afterward: ${toolCall.afterward}`, "");
+      } else if (Object.keys(toolCall.args).length > 0) {
+        parts.push("```json", JSON.stringify(toolCall.args, null, 2), "```", "");
+      }
+
+      if (toolCall.output) {
+        parts.push("```", toolCall.output, "```", "");
+      }
+    }
+  }
+
+  return parts;
 }
 
 /**
@@ -109,8 +147,15 @@ export function logPromptSnapshot(snapshot: PromptSnapshot): void {
       parts.push("## Execution", "");
       parts.push(`- afterward: ${ex.afterward}`);
       parts.push(`- tool calls: ${ex.toolCallCount}`);
+      if (ex.assistantTurnCount != null) parts.push(`- assistant turns: ${ex.assistantTurnCount}`);
+      if (ex.bashCallCount != null) parts.push(`- bash calls: ${ex.bashCallCount}`);
+      if (ex.signalCallCount != null) parts.push(`- signal calls: ${ex.signalCallCount}`);
       if (ex.budgetExhausted) parts.push("- **budget exhausted**");
       parts.push("");
+
+      if (ex.transcript && ex.transcript.length > 0) {
+        parts.push(...renderTranscript(ex.transcript), "");
+      }
 
       if (ex.thinks.length > 0) {
         parts.push("### Thinks", "");
@@ -125,6 +170,14 @@ export function logPromptSnapshot(snapshot: PromptSnapshot): void {
         for (const q of ex.queryLogs) {
           const preview = q.result.length > 200 ? `${q.result.slice(0, 200)}...` : q.result;
           parts.push(`- \`${q.fn}\`: ${preview}`);
+        }
+        parts.push("");
+      }
+
+      if (ex.instructionErrors.length > 0) {
+        parts.push("### Instruction Errors", "");
+        for (const e of ex.instructionErrors) {
+          parts.push(`- ${e}`);
         }
         parts.push("");
       }

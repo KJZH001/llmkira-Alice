@@ -51,16 +51,16 @@ export const BEAT_TYPES = [
 
 export type BeatType = (typeof BEAT_TYPES)[number];
 
-// -- ADR-241: 压力阈值过滤常量 -------------------------------------------
+// -- ADR-241: 相关性衰减常量 ------------------------------------------------
 
-/** ADR-241: 压力阈值 — 低于此值的线程不注入 prompt。 */
-// 依据：minor 线程（初始值 0.5）约 7 天后压力降至 0.15 以下。
-// major 线程（初始值 2.0）无活动约 30 天后才低于 0.15。
-const PRESSURE_THRESHOLD = 0.15;
+/** ADR-241: 相关性阈值 — 低于此值的线程不注入 prompt。 */
+// 依据：半衰期 7 天时，minor 线程（w=0.5）约 7 天后 relevance ≈ 0.25，14 天 ≈ 0.125。
+// major 线程（w=2.0）14 天 ≈ 1.0，28 天 ≈ 0.5。
+const RELEVANCE_THRESHOLD = 0.15;
 
 /** ADR-241: Stale 标记阈值 — 接近过滤阈值时显示 [stale] 标记。 */
-// 1.5× PRESSURE_THRESHOLD = 0.225，提前约 1-2 天警告。
-const STALE_THRESHOLD = PRESSURE_THRESHOLD * 1.5;
+// 2× RELEVANCE_THRESHOLD，提前约 2-3 天警告。
+const STALE_THRESHOLD = RELEVANCE_THRESHOLD * 2;
 
 // -- 辅助函数 -----------------------------------------------------------------
 
@@ -109,6 +109,31 @@ function threadPressure(
   const sinceBeatS = Math.max(0, (nowMs - (lastBeatMs ?? createdMs)) / 1000);
   const activityDecay = sinceBeatS > 300 ? Math.log(sinceBeatS / 60) * w * 0.1 : 0;
   return agingPressure + activityDecay;
+}
+
+/**
+ * ADR-241: 线程相关性（半衰期衰减）— 用于过滤，不用于排序。
+ *
+ * threadPressure 随时间增长（"处理紧迫度"），用于排序是正确的。
+ * threadRelevance 随不活跃时间衰减（"当前相关性"），用于过滤长期无活动线程。
+ *
+ * 半衰期 7 天：minor 线程 7 天后 ≈ 0.25，14 天 ≈ 0.125（低于 RELEVANCE_THRESHOLD）。
+ * @see docs/adr/241-thread-weight-decay.md
+ * @see docs/adr/89-impression-formation-system.md（半衰期参考）
+ */
+export function threadRelevance(
+  createdMs: number,
+  lastBeatMs: number | null,
+  weight: string,
+  nowMs: number,
+): number {
+  const w = WEIGHT_MAP[weight] ?? 0.5;
+  const baseMs = lastBeatMs ?? createdMs;
+  const inactiveS = Math.max(0, (nowMs - baseMs) / 1000);
+  // 半衰期 7 天（604800 秒）
+  const DECAY_HALF_LIFE_S = 7 * 86400;
+  const decayFactor = 2 ** (-inactiveS / DECAY_HALF_LIFE_S);
+  return w * decayFactor;
 }
 
 // -- Mod 状态 -----------------------------------------------------------------
@@ -409,6 +434,15 @@ export const threadsMod = createMod<ThreadsState>("threads", {
             r.weight,
             ctx.nowMs,
           ),
+          // ADR-241: relevance 用于 dormant 判定（半衰期衰减）
+          relevance: threadRelevance(
+            estimateEventMs({ createdAt: r.createdAt, tick: r.createdTick }, ctx.nowMs, ctx.tick),
+            r.lastBeatTick != null
+              ? estimateEventMs({ tick: r.lastBeatTick }, ctx.nowMs, ctx.tick)
+              : null,
+            r.weight,
+            ctx.nowMs,
+          ),
         }))
         .sort((a, b) => b.pressure - a.pressure);
     },
@@ -417,13 +451,13 @@ export const threadsMod = createMod<ThreadsState>("threads", {
       if (rows.length === 0) return ["(no open topics)"];
       return rows.map((r) => {
         const parts = [`#${r.id} "${r.title}" [${r.status}] ${r.weight}`];
-        if (r.pressure != null) {
+        // ADR-241: 用 relevance（衰减型）判定 dormant，用 pressure（增长型）判定 urgency
+        const rel = Number(r.relevance ?? r.pressure ?? 0);
+        if (rel < RELEVANCE_THRESHOLD) {
+          parts.push("dormant");
+        } else if (r.pressure != null) {
           const p = Number(r.pressure);
-          // ADR-241: dormant 状态表示线程存在但不会注入到 prompt 中
-          const urgency =
-            p < PRESSURE_THRESHOLD ? "dormant" :
-            p > 1.0 ? "high urgency" :
-            p > 0.5 ? "moderate" : "low";
+          const urgency = p > 1.0 ? "high urgency" : p > 0.5 ? "moderate" : "low";
           parts.push(urgency);
         }
         const involves = r.involves as
@@ -521,20 +555,21 @@ export const threadsMod = createMod<ThreadsState>("threads", {
     const targetNodeId = relState?.targetNodeId ?? null;
 
     const allThreads = rows
-      .map((r) => ({
-        ...r,
-        involves: parseInvolves(r.involves),
-        pressure: threadPressure(
-          estimateEventMs({ createdAt: r.createdAt, tick: r.createdTick }, ctx.nowMs, ctx.tick),
-          r.lastBeatTick != null
-            ? estimateEventMs({ tick: r.lastBeatTick }, ctx.nowMs, ctx.tick)
-            : null,
-          r.weight,
-          ctx.nowMs,
-        ),
-      }))
-      // ADR-241: 压力阈值过滤 — 自动排除长期无活动的线程
-      .filter((t) => t.pressure >= PRESSURE_THRESHOLD)
+      .map((r) => {
+        const createdMs = estimateEventMs({ createdAt: r.createdAt, tick: r.createdTick }, ctx.nowMs, ctx.tick);
+        const lastBeatMs = r.lastBeatTick != null
+          ? estimateEventMs({ tick: r.lastBeatTick }, ctx.nowMs, ctx.tick)
+          : null;
+        return {
+          ...r,
+          involves: parseInvolves(r.involves),
+          pressure: threadPressure(createdMs, lastBeatMs, r.weight, ctx.nowMs),
+          // ADR-241: relevance 用于过滤（半衰期衰减），pressure 用于排序（增长型）
+          relevance: threadRelevance(createdMs, lastBeatMs, r.weight, ctx.nowMs),
+        };
+      })
+      // ADR-241: 相关性过滤 — 自动排除长期无活动的线程
+      .filter((t) => t.relevance >= RELEVANCE_THRESHOLD)
       .sort((a, b) => b.pressure - a.pressure);
 
     // 分离：涉及当前对话对象的线程优先展示
@@ -575,11 +610,12 @@ export const threadsMod = createMod<ThreadsState>("threads", {
         lastBeatMs != null
           ? ` — you last advanced ${humanDurationAgo((ctx.nowMs - lastBeatMs) / 1000)}`
           : "";
-      // ADR-241: Stale 标记 — 接近过滤阈值时显示 [stale]
-      const isStale = t.pressure < STALE_THRESHOLD;
+      // ADR-241: Stale 标记 — relevance 接近过滤阈值时显示 [stale]
+      const isStale = t.relevance < STALE_THRESHOLD;
       const staleTag = isStale ? " [stale]" : "";
       // ADR-241: 计算无活动天数
-      const inactiveMs = ctx.nowMs - (lastBeatMs ?? t.createdAt);
+      const baseActivityMs = lastBeatMs ?? (typeof t.createdAt === "number" ? t.createdAt : t.createdAt.getTime());
+      const inactiveMs = ctx.nowMs - baseActivityMs;
       const inactiveDays = Math.round(inactiveMs / (24 * 3600 * 1000));
       const inactiveTag = inactiveDays > 0 ? ` — inactive ${inactiveDays}d` : "";
       m.line(

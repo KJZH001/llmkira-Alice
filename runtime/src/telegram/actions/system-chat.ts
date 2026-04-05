@@ -20,15 +20,18 @@ function buildAliceChatArgs(
   subcommand: string,
   options?: {
     chatId?: number;
-    positional?: string[];
+    flags?: Record<string, string | number | undefined>;
   },
 ): string[] {
   const args = [subcommand];
   if (options?.chatId != null) {
     args.push("--in", String(options.chatId));
   }
-  if (options?.positional?.length) {
-    args.push(...options.positional);
+  if (options?.flags) {
+    for (const [key, value] of Object.entries(options.flags)) {
+      if (value == null) continue;
+      args.push(`--${key}`, String(value));
+    }
   }
   return args;
 }
@@ -85,7 +88,7 @@ export const systemChatActions: TelegramActionDef[] = [
     name: "tail",
     category: "search",
     description: ["Read recent messages from the current chat through the system command layer."],
-    usageHint: "Preferred shell-native read path. Equivalent to irc tail [count].",
+    usageHint: "Preferred shell-native read path. Equivalent to irc tail --count <number>.",
     params: z.object({
       count: z.number().int().positive().max(50).optional().describe("Message count (default 20)"),
       chatId: z.number().optional().describe("Optional chat override; omit for current chat"),
@@ -105,12 +108,12 @@ export const systemChatActions: TelegramActionDef[] = [
           ctx,
           buildAliceChatArgs("tail", {
             chatId: args.chatId,
-            positional: args.count != null ? [String(args.count)] : undefined,
+            flags: { count: args.count },
           }),
           args.chatId,
         );
         commandOutputContract.store(ctx.G, "self", {
-          command: `irc tail${args.count != null ? ` ${args.count}` : ""}`,
+          command: `irc tail${args.count != null ? ` --count ${args.count}` : ""}`,
           stdout: stdout || "(no output)",
         });
         return true;
@@ -191,7 +194,7 @@ export const systemChatActions: TelegramActionDef[] = [
     name: "join",
     category: "group",
     description: ["Join a group, channel, or invite link through the system chat client."],
-    usageHint: "Preferred shell-native join path. Equivalent to irc join <target>.",
+    usageHint: "Preferred shell-native join path. Equivalent to irc join --target <target>.",
     params: z.object({
       target: z.string().describe("Chat id, @username, or invite link"),
     }),
@@ -203,7 +206,7 @@ export const systemChatActions: TelegramActionDef[] = [
     },
     async impl(ctx, args) {
       try {
-        await runAliceChat(ctx, buildAliceChatArgs("join", { positional: [args.target] }));
+        await runAliceChat(ctx, buildAliceChatArgs("join", { flags: { target: args.target } }));
         return true;
       } catch (e) {
         return { success: false, error: e instanceof Error ? e.message : String(e) };

@@ -46,6 +46,7 @@ import type { ActionQueue, ActionQueueItem } from "../action-queue.js";
 import { measureClosureDepth } from "../closure-depth.js";
 import { commitActEvents } from "../consciousness.js";
 import { runTickSubcycle } from "../tick/bridge.js";
+import { ChatTarget } from "../../prompt/types.js";
 import { processResult } from "./feedback-arc.js";
 
 const log = createLogger("react:orchestrator");
@@ -298,11 +299,21 @@ export async function startReActLoop(ctx: ActContext): Promise<void> {
     // 拉取最新消息（可能在其他 engagement 执行期间有新消息到达）
     if (next.session.subcycle > 1 && next.targetChatId) {
       const prevMessageCount = next.liveMessages.length;
-      next.liveMessages = await fetchRecentMessages(ctx.client, next.targetChatId, ctx.config);
+      const chatType =
+        next.item.target && ctx.G.has(next.item.target)
+          ? (ctx.G.getChannel(next.item.target).chat_type ?? undefined)
+          : undefined;
+      next.liveMessages = await fetchRecentMessages(ctx.client, next.targetChatId, ctx.config, {
+        chatType,
+      });
 
-      // D2: Observation Quality Gate — 如果没有新消息，跳过 LLM 调用
-      // expect_reply/stay 唤醒后如果观察环境无变化，继续调用 LLM 只是浪费 token。
-      if (next.liveMessages.length <= prevMessageCount) {
+      // D2: Observation Quality Gate — 频道无新消息时跳过 LLM 调用。
+      // 私聊/群组不检查——Alice 应主动参与对话，不依赖"有新消息"触发。
+      // @see docs/adr/242-command-interface-standardization.md §Phase 3
+      if (
+        ChatTarget.isChannelChat(chatType ?? "private") &&
+        next.liveMessages.length <= prevMessageCount
+      ) {
         log.info("D2: No new messages since last subcycle → terminate", {
           target: next.item.target,
           subcycle: next.session.subcycle,

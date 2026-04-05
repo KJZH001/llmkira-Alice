@@ -4,7 +4,7 @@
 # 用法:
 #   curl -fsSL https://raw.githubusercontent.com/LlmKira/Alice/main/runtime/install.sh | sh
 #
-# 需要: Node.js 20+, npm, Go 1.22+ 或 Docker（Go/Docker 二选一用于编译 skill CLI）
+# 需要: Node.js 22+, pnpm, Go 1.22+ 或 Docker（Go/Docker 二选一用于编译 skill CLI）
 #
 # 安装位置:
 #   /usr/local/bin/alice          # CLI
@@ -58,14 +58,20 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 NODE_MAJOR=$(node -e 'console.log(process.versions.node.split(".")[0])')
-if [ "$NODE_MAJOR" -lt 20 ]; then
-    fail "Node.js 版本过低 (v$(node -v))，需要 v20+"
+if [ "$NODE_MAJOR" -lt 22 ]; then
+    fail "Node.js 版本过低 (v$(node -v))，需要 v22+"
 fi
 info "Node.js $(node -v) ✓"
 
 if ! command -v pnpm >/dev/null 2>&1; then
-    info "安装 pnpm..."
-    npm install -g pnpm || fail "pnpm 安装失败，请手动安装: npm install -g pnpm"
+    if command -v corepack >/dev/null 2>&1; then
+        info "使用 corepack 激活 pnpm..."
+        corepack enable || fail "corepack enable 失败"
+        corepack prepare pnpm@latest --activate || fail "pnpm 激活失败，请手动安装 pnpm"
+    else
+        info "安装 pnpm..."
+        npm install -g pnpm || fail "pnpm 安装失败，请手动安装: npm install -g pnpm"
+    fi
 fi
 info "pnpm $(pnpm --version) \u2713"
 
@@ -125,6 +131,14 @@ cd "$WORKDIR/alice/runtime"
 
 info "编译..."
 
+step "安装 pnpm 依赖（用于构建 system-bin）"
+cd "$WORKDIR/alice"
+pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+cd "$WORKDIR/alice/runtime"
+
+step "构建 system-bin（irc / self / alice-pkg）"
+pnpm run build:bin
+
 case "$BUILD_METHOD" in
     go)
         step "使用本地 Go"
@@ -161,6 +175,12 @@ case "$BUILD_METHOD" in
         ;;
 esac
 
+for bin in irc self alice-pkg; do
+    if [ ! -x "dist/bin/$bin" ]; then
+        fail "缺少 system-bin: dist/bin/$bin（请检查 pnpm run build:bin）"
+    fi
+done
+
 COUNT=$(ls dist/bin/ | wc -l)
 info "编译完成: $COUNT 个二进制"
 
@@ -181,14 +201,15 @@ info "安装运行时代码..."
 sudo mkdir -p "$PREFIX/lib/alice/runtime"
 
 # 复制必要的运行时文件
-for item in src package.json tsconfig.json drizzle.config.ts drizzle skills; do
+for item in src package.json tsconfig.json drizzle.config.ts drizzle skills dist; do
     if [ -e "$item" ]; then
         step "复制 $item"
         sudo cp -r "$item" "$PREFIX/lib/alice/runtime/"
     fi
 done
 
-# 复制 pnpm workspace 文件（锁文件在仓库根目录）
+# 复制 pnpm workspace 文件（锁文件和构建白名单在仓库根目录）
+sudo cp "$WORKDIR/alice/package.json" "$PREFIX/lib/alice/"
 sudo cp "$WORKDIR/alice/pnpm-lock.yaml" "$PREFIX/lib/alice/"
 sudo cp "$WORKDIR/alice/pnpm-workspace.yaml" "$PREFIX/lib/alice/"
 
@@ -196,6 +217,21 @@ sudo cp "$WORKDIR/alice/pnpm-workspace.yaml" "$PREFIX/lib/alice/"
 info "安装运行时依赖..."
 cd "$PREFIX/lib/alice"
 sudo pnpm install --prod --frozen-lockfile 2>/dev/null || sudo pnpm install --prod
+
+# 验证原生模块（better-sqlite3 / @mtcute/node）
+info "验证原生模块..."
+if ! sudo sh -c "cd '$PREFIX/lib/alice/runtime' && node --input-type=module -e \"await import('better-sqlite3'); await import('@mtcute/node');\""; then
+    fail "原生模块加载失败（better-sqlite3 / @mtcute/node）。
+
+可能原因:
+  1. pnpm 跳过了构建脚本（缺少根 package.json 的 onlyBuiltDependencies）
+  2. 当前系统缺少 Node.js 对应的预编译产物
+  3. 上一次安装残留了不完整的 node_modules
+
+建议处理:
+  sudo pnpm --dir $PREFIX/lib/alice rebuild better-sqlite3
+  然后重新执行安装脚本"
+fi
 
 # ── 构建 Docker 镜像（可选） ──────────────────────────────────────────
 

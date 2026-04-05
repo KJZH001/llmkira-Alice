@@ -28,6 +28,28 @@ export const TC_MAX_TOOL_CALLS = 8;
 // 工具名常量
 const BASH_TOOL_NAME = "bash";
 const SIGNAL_TOOL_NAME = "signal";
+type ToolChoice = "required" | "auto";
+
+export interface TCToolCallTrace {
+  sequence: number;
+  round: number;
+  toolCallId: string;
+  name: string;
+  args: Record<string, unknown>;
+  command?: string;
+  afterward?: Afterward;
+  output: string;
+  errors: string[];
+  instructionErrors: string[];
+}
+
+export interface TCAssistantRoundTrace {
+  round: number;
+  toolChoice: ToolChoice;
+  finishReason: string | null;
+  assistantText: string;
+  toolCalls: TCToolCallTrace[];
+}
 
 /**
  * TC 循环上下文。
@@ -50,12 +72,41 @@ export interface TCLoopResult extends ScriptExecutionResult {
   afterward: Afterward;
   /** tool_use 调用次数。 */
   toolCallCount: number;
+  /** assistant 轮次数（一次 ChatCompletion 响应算一轮）。 */
+  assistantTurnCount?: number;
+  /** bash 工具调用次数。 */
+  bashCallCount?: number;
+  /** signal 工具调用次数。 */
+  signalCallCount?: number;
   /** 是否触及 TC_MAX_TOOL_CALLS 预算上限。 */
   budgetExhausted: boolean;
   /** 原始脚本（LLM 生成的命令行，用于诊断日志）。 */
   rawScript: string;
   /** 聚合的 `$ cmd\noutput` 块（完整命令 + 输出对）。 */
   commandOutput: string;
+  /** TC 内部真实 transcript（按 assistant round 保真）。 */
+  transcript?: TCAssistantRoundTrace[];
+}
+
+function extractAssistantText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+
+  const parts: string[] = [];
+  for (const item of content) {
+    if (typeof item === "string") {
+      parts.push(item);
+      continue;
+    }
+    if (!item || typeof item !== "object") continue;
+
+    const text = (item as { text?: unknown }).text;
+    if (typeof text === "string" && text.length > 0) {
+      parts.push(text);
+    }
+  }
+
+  return parts.join("\n").trim();
 }
 
 /**
@@ -70,7 +121,12 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
   let toolCallCount = 0;
   let afterward: Afterward = "done";
   let budgetExhausted = false;
+  let bashCallCount = 0;
+  let signalCallCount = 0;
+  let callSequence = 0;
   const commandOutputs: string[] = [];
+  const rawScripts: string[] = [];
+  const transcript: TCAssistantRoundTrace[] = [];
 
   // ADR-234: 聚合每次执行的结果
   const executionResult: ScriptExecutionResult = {
@@ -89,7 +145,7 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
     while (toolCallCount < TC_MAX_TOOL_CALLS) {
       // ADR-233: 首轮强制 tool_choice="required"，确保模型至少调用一次工具（bash 或 signal）。
       // 后续轮次 "auto" 允许自然 end_turn。
-      const choice: "required" | "auto" = toolCallCount === 0 ? "required" : "auto";
+      const choice: ToolChoice = toolCallCount === 0 ? "required" : "auto";
       const response = await withResilience(
         () =>
           ctx.openai.chat.completions.create({
@@ -110,6 +166,14 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
       }
 
       messages.push(assistantMsg);
+      const roundTrace: TCAssistantRoundTrace = {
+        round: transcript.length,
+        toolChoice: choice,
+        finishReason: response.choices[0]?.finish_reason ?? null,
+        assistantText: extractAssistantText(assistantMsg.content),
+        toolCalls: [],
+      };
+      transcript.push(roundTrace);
 
       const toolCalls = assistantMsg.tool_calls;
       if (!toolCalls || toolCalls.length === 0) {
@@ -123,12 +187,24 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
 
       for (const toolCall of toolCalls) {
         toolCallCount++;
+        callSequence++;
         const { name, args } = extractToolUseParams(toolCall);
         log.debug("Tool call", { name, toolCallCount });
 
         if (name === BASH_TOOL_NAME) {
+          bashCallCount++;
           const command = String(args.command ?? "");
           if (!command) {
+            roundTrace.toolCalls.push({
+              sequence: callSequence,
+              round: roundTrace.round,
+              toolCallId: toolCall.id,
+              name,
+              args,
+              output: "(no command provided)",
+              errors: [],
+              instructionErrors: [],
+            });
             messages.push({
               role: "tool",
               tool_call_id: toolCall.id,
@@ -136,6 +212,8 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
             });
             continue;
           }
+
+          rawScripts.push(command);
 
           // ADR-234: 使用 shell-executor 执行（复用 docker.ts persistent session）
           const result = await executeShellScript(command, { contextVars: ctx.contextVars });
@@ -151,11 +229,29 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
             executionResult.silenceReason = result.silenceReason;
           }
 
-          const output =
-            result.errors.length > 0
-              ? `exit ${result.errors.join("\n")}\n${result.logs.join("\n")}`
-              : result.logs.join("\n") || "(no output)";
+          const outputParts: string[] = [];
+          if (result.instructionErrors.length > 0) {
+            outputParts.push(`instruction error\n${result.instructionErrors.join("\n")}`);
+          }
+          if (result.errors.length > 0) {
+            outputParts.push(`exit ${result.errors.join("\n")}`);
+          }
+          if (result.logs.length > 0) {
+            outputParts.push(result.logs.join("\n"));
+          }
+          const output = outputParts.join("\n") || "(no output)";
 
+          roundTrace.toolCalls.push({
+            sequence: callSequence,
+            round: roundTrace.round,
+            toolCallId: toolCall.id,
+            name,
+            args,
+            command,
+            output,
+            errors: [...result.errors],
+            instructionErrors: [...result.instructionErrors],
+          });
           commandOutputs.push(`$ ${command}\n${output}`);
 
           messages.push({
@@ -164,16 +260,40 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
             content: output,
           });
         } else if (name === SIGNAL_TOOL_NAME) {
+          signalCallCount++;
           const sig = String(args.afterward ?? "done") as Afterward;
           afterward = sig;
+          const ack = `ack: ${sig}`;
+
+          roundTrace.toolCalls.push({
+            sequence: callSequence,
+            round: roundTrace.round,
+            toolCallId: toolCall.id,
+            name,
+            args,
+            afterward: sig,
+            output: ack,
+            errors: [],
+            instructionErrors: [],
+          });
 
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,
-            content: `ack: ${sig}`,
+            content: ack,
           });
         } else {
           log.warn("Unknown tool call", { name, toolCallId: toolCall.id });
+          roundTrace.toolCalls.push({
+            sequence: callSequence,
+            round: roundTrace.round,
+            toolCallId: toolCall.id,
+            name,
+            args,
+            output: "(unknown tool)",
+            errors: [],
+            instructionErrors: [],
+          });
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,
@@ -192,20 +312,18 @@ export async function runTCLoop(ctx: TCLoopContext): Promise<TCLoopResult> {
     throw e;
   }
 
-  // rawScript: 从 commandOutputs 提取原始命令行（去掉输出，只留 `$ cmd` 行）
-  const rawScript = commandOutputs
-    .map((block) => {
-      const firstLine = block.split("\n")[0];
-      return firstLine.startsWith("$ ") ? firstLine.slice(2) : firstLine;
-    })
-    .join("\n");
+  const rawScript = rawScripts.join("\n\n");
 
   return {
     commandOutput: commandOutputs.join("\n---\n"),
     rawScript,
     afterward,
     toolCallCount,
+    assistantTurnCount: transcript.length,
+    bashCallCount,
+    signalCallCount,
     budgetExhausted,
+    transcript,
     // ScriptExecutionResult 字段
     logs: executionResult.logs,
     errors: executionResult.errors,

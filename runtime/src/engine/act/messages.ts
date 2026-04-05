@@ -18,6 +18,7 @@ import type { Config } from "../../config.js";
 import { getDb } from "../../db/connection.js";
 import { type DbMessageRecord, getMessageCluster } from "../../db/queries.js";
 import { stickerPalette } from "../../db/schema.js";
+import type { ChatType } from "../../graph/entities.js";
 import { isASREnabled, transcribeVoice } from "../../llm/asr.js";
 import { setCachedChatInfo } from "../../llm/group-cache.js";
 import {
@@ -105,6 +106,22 @@ function appendSegment(record: MessageRecord, seg: ContentSegment): void {
   record.text = record.segments.map((s) => s.text).join(" ");
 }
 
+const CONTEXT_HORIZON_MS_PRIVATE = 7 * 24 * 3600_000;
+const CONTEXT_HORIZON_MS_GROUP = 48 * 3600_000;
+
+/**
+ * ADR-134 D4: 计算实时消息窗口的地平线。
+ *
+ * 频道是信息流，不是对话。只要还在浏览这个 channel，最新几条帖子即便超过 48h
+ * 也仍然有决策价值；否则 prompt 会退化成“可转发对象列表”，丢掉频道正文。
+ */
+export function resolveContextHorizonMs(chatId: number, chatType?: ChatType): number | null {
+  if (chatType === "channel") return null;
+  if (chatType === "private") return CONTEXT_HORIZON_MS_PRIVATE;
+  if (chatType === "group" || chatType === "supergroup") return CONTEXT_HORIZON_MS_GROUP;
+  return chatId > 0 ? CONTEXT_HORIZON_MS_PRIVATE : CONTEXT_HORIZON_MS_GROUP;
+}
+
 /**
  * 获取目标频道的近期消息（Telegram API 实时拉取）。
  */
@@ -112,20 +129,22 @@ export async function fetchRecentMessages(
   client: TelegramClient,
   chatId: number,
   config: Config,
-  limit = 30,
+  opts: {
+    limit?: number;
+    chatType?: ChatType;
+  } = {},
 ): Promise<MessageRecord[]> {
   try {
+    const limit = opts.limit ?? 30;
     const rawMessages = await getHistory(client, chatId, limit);
 
-    // ADR-134 D4: 感知地平线 — 过滤超出时间跨度的消息
-    // 私聊 7 天（节奏慢），群聊/超级群 48 小时（流速快）。
-    // chatId > 0 = 私聊，chatId < 0 = 群聊/超级群/频道。
+    // ADR-134 D4: 感知地平线 — 群聊与频道不能共用同一条粗粒度规则。
+    // group/supergroup: 保持 48h 对话窗口；private: 7d；channel: 保留最新帖子（不限时）。
     // @see docs/adr/134-temporal-coherence.md §D4
-    const CONTEXT_HORIZON_MS_PRIVATE = 7 * 24 * 3600_000;
-    const CONTEXT_HORIZON_MS_GROUP = 48 * 3600_000;
-    const horizonMs = chatId > 0 ? CONTEXT_HORIZON_MS_PRIVATE : CONTEXT_HORIZON_MS_GROUP;
-    const floorMs = Date.now() - horizonMs;
-    const messages = rawMessages.filter((m) => m.date.getTime() >= floorMs);
+    const horizonMs = resolveContextHorizonMs(chatId, opts.chatType);
+    const floorMs = horizonMs == null ? null : Date.now() - horizonMs;
+    const messages =
+      floorMs == null ? rawMessages : rawMessages.filter((m) => m.date.getTime() >= floorMs);
 
     let records: MessageRecord[] = [];
 

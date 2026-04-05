@@ -126,6 +126,17 @@ export interface StyleViolation {
   message: string;
 }
 
+export interface PromptStyleEnforcementOptions {
+  /**
+   * 违规则如何落日志。
+   *
+   * - warn: 默认。适用于 system prompt 等纯内部生成文本
+   * - debug: 仅审计，不干扰日常日志。适用于夹带 Telegram 原始内容的 user prompt
+   * - silent: 仅返回计数，不落日志
+   */
+  violationLogLevel?: "warn" | "debug" | "silent";
+}
+
 const RULES: Array<{ name: string; test: (line: string) => boolean; msg: string }> = [
   { name: "no-indent", test: (l) => /^[ \t]+\S/.test(l), msg: "行首禁止缩进" },
   { name: "no-bare-title", test: (l) => /^[A-Z][\w ]+:\s*$/.test(l), msg: "裸标题 → ## Title" },
@@ -174,13 +185,23 @@ export function lintPromptStyle(text: string): StyleViolation[] {
  *
  * @returns violation 数量
  */
-export function enforcePromptStyle(text: string, label: string): number {
+export function enforcePromptStyle(
+  text: string,
+  label: string,
+  options: PromptStyleEnforcementOptions = {},
+): number {
   const violations = lintPromptStyle(text);
   if (violations.length > 0) {
-    log.warn(`Prompt style violations in ${label}`, {
+    const payload = {
       count: violations.length,
       first5: violations.slice(0, 5).map((v) => `L${v.line} [${v.rule}] ${v.message}: ${v.text}`),
-    });
+    };
+    const level = options.violationLogLevel ?? "warn";
+    if (level === "warn") {
+      log.warn(`Prompt style violations in ${label}`, payload);
+    } else if (level === "debug") {
+      log.debug(`Prompt style violations in ${label}`, payload);
+    }
   }
   return violations.length;
 }

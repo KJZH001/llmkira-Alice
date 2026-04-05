@@ -162,7 +162,6 @@ export function buildCapabilityGuide(
  */
 export async function buildTickPrompt(
   board: Blackboard,
-  allTools: readonly UnifiedTool[],
   ctx: TickPromptContext,
 ): Promise<{ system: string; user: string }> {
   const { G, dispatcher, config, item, tick, messages, observations, round, episodeRound } = ctx;
@@ -289,8 +288,13 @@ export async function buildTickPrompt(
   const user = renderUserPrompt(snapshot);
 
   // ADR-141: 安全网
+  // system prompt 基本都是内部生成文本，违规则直接 warn。
   enforcePromptStyle(system, "system-prompt-tick");
-  enforcePromptStyle(user, "user-prompt-tick");
+  // user prompt 混入 Telegram 原始消息、历史回顾等外部内容。
+  // 这些文本可能天然带有 Markdown / 标题 / 缩进，不应在生产日志中反复告警。
+  // user prompt 的格式安全主要靠 PromptBuilder + 定向测试保障；
+  // 运行时这里只保留 debug 级审计入口，避免 PM2 日志被噪声淹没。
+  enforcePromptStyle(user, "user-prompt-tick", { violationLogLevel: "debug" });
 
   return { system, user };
 }

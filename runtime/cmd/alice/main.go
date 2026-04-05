@@ -1,15 +1,17 @@
 // alice — Alice 运行时管理 CLI
 //
 // 用法:
-//   alice init     # 初始化当前目录
-//   alice run      # 前台运行
-//   alice start    # 后台运行
-//   alice stop     # 停止
-//   alice status   # 查看状态
-//   alice doctor   # 环境诊断
+//
+//	alice init     # 初始化当前目录
+//	alice run      # 前台运行
+//	alice start    # 后台运行
+//	alice stop     # 停止
+//	alice status   # 查看状态
+//	alice doctor   # 环境诊断
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,6 +19,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +30,22 @@ var version = "1.0.0"
 
 const pidFile = ".alice.pid"
 const envFile = ".env"
+const requiredNodeMajor = 22
+
+const defaultEnvTemplate = `# Alice 配置文件
+
+# Telegram（从 https://my.telegram.org/apps 获取）
+TELEGRAM_API_ID=
+TELEGRAM_API_HASH=
+TELEGRAM_PHONE=
+
+# LLM（OpenAI-compatible）
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=
+LLM_MODEL=gpt-4o
+`
+
+var requiredSystemBinaries = []string{"irc", "self", "alice-pkg"}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -59,7 +79,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`Alice — 电子伴侣运行时管理
+	_, _ = os.Stdout.WriteString(`Alice — 电子伴侣运行时管理
 
 用法:
   alice <command>
@@ -80,24 +100,19 @@ func printUsage() {
   查看: tail -f logs/$(date +%F).log
 
 多实例:
-  cp -r ~/alice ~/bot2 && cd ~/bot2 && alice run`)
+  cp -r ~/alice ~/bot2 && cd ~/bot2 && alice run
+`)
 }
 
 func initDir() {
 	// 创建 .env 模板
 	if _, err := os.Stat(envFile); os.IsNotExist(err) {
-		content := `# Alice 配置文件
-
-# LLM Provider
-OPENAI_API_KEY=your-api-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o
-
-# Telegram (从 https://my.telegram.org 获取)
-TELEGRAM_API_ID=your-api-id
-TELEGRAM_API_HASH=your-api-hash
-`
-		if err := os.WriteFile(envFile, []byte(content), 0644); err != nil {
+		content, err := readEnvTemplate()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "❌ 读取 .env 模板失败: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(envFile, content, 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ 创建 .env 失败: %v\n", err)
 			os.Exit(1)
 		}
@@ -122,6 +137,11 @@ func run(daemon bool) {
 		fmt.Fprintln(os.Stderr, "❌ 缺少 .env 配置文件，运行 alice init")
 		os.Exit(1)
 	}
+	envVars, err := loadEnvFile(envFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ 读取 .env 失败: %v\n", err)
+		os.Exit(1)
+	}
 
 	// 检查是否已在运行
 	if isRunning() {
@@ -136,26 +156,30 @@ func run(daemon bool) {
 		fmt.Fprintln(os.Stderr, "   请在包含 src/index.ts 的目录运行，或设置 ALICE_RUNTIME_DIR")
 		os.Exit(1)
 	}
+	systemBinDir := findSystemBinDir(runtimeDir)
+	if missing := findMissingSystemBinaries(systemBinDir); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "❌ 缺少 Alice system-bin：%s\n", strings.Join(missing, ", "))
+		fmt.Fprintf(os.Stderr, "   预期目录: %s\n", absPath(systemBinDir))
+		fmt.Fprintln(os.Stderr, "   请先执行 `pnpm run build:bin`，或重新运行安装脚本")
+		os.Exit(1)
+	}
 
 	// 创建日志目录
 	os.MkdirAll("logs", 0755)
 
-	// 检测运行时（优先 Node.js，因为 better-sqlite3 兼容性）
-	var cmd *exec.Cmd
-	if hasCommand("npx") {
-		cmd = exec.Command("npx", "tsx", filepath.Join(runtimeDir, "src/index.ts"))
-	} else if hasCommand("bun") {
-		// Bun 有 better-sqlite3 兼容问题，提示用户
-		fmt.Fprintln(os.Stderr, "⚠️  使用 Bun 运行，但 better-sqlite3 可能不兼容")
-		fmt.Fprintln(os.Stderr, "   推荐安装 Node.js: curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs")
-		cmd = exec.Command("bun", filepath.Join(runtimeDir, "src/index.ts"))
-	} else {
-		fmt.Fprintln(os.Stderr, "❌ 需要 Node.js 或 Bun")
+	// 检测运行时（优先项目内 tsx，其次 pnpm exec，避免通过 npx 临时下载）
+	cmd, warning, err := newRuntimeCommand(runtimeDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ %v\n", err)
 		os.Exit(1)
+	}
+	if warning != "" {
+		fmt.Fprintln(os.Stderr, warning)
 	}
 
 	// 设置环境
-	cmd.Env = append(os.Environ(), "ALICE_WORKDIR="+absPath("."))
+	cmd.Env = appendEnvVars(os.Environ(), envVars)
+	cmd.Env = setEnvValue(cmd.Env, "ALICE_WORKDIR", absPath("."))
 
 	if daemon {
 		// 后台运行 — 日志写入文件
@@ -185,7 +209,7 @@ func run(daemon bool) {
 		fmt.Printf("✅ Alice 已启动 (pid: %d)\n", pid)
 		fmt.Printf("   日志: %s\n", logFile)
 		fmt.Println("   停止: alice stop")
-		fmt.Println("   查看日志: tail -f logs/$(date +%Y-%m-%d).log")
+		_, _ = os.Stdout.WriteString("   查看日志: tail -f logs/$(date +%Y-%m-%d).log\n")
 	} else {
 		// 前台运行 — 日志输出到 stdout/stderr
 		cmd.Stdin = os.Stdin
@@ -265,6 +289,7 @@ func doctor() {
 	fmt.Println()
 
 	ok := true
+	runtimeDir := findRuntimeDir()
 
 	// Go 版本
 	fmt.Print("  Go 版本: ")
@@ -275,22 +300,61 @@ func doctor() {
 		fmt.Println("⚠️  未安装 (可选，用于编译)")
 	}
 
-	// Bun
-	fmt.Print("  Bun: ")
-	if hasCommand("bun") {
-		out, _ := exec.Command("bun", "--version").Output()
-		fmt.Printf("✅ %s\n", strings.TrimSpace(string(out)))
-	} else {
-		fmt.Println("⚠️  未安装，推荐: curl -fsSL https://bun.sh/install | bash")
-	}
-
 	// Node.js
 	fmt.Print("  Node.js: ")
 	if hasCommand("node") {
 		out, _ := exec.Command("node", "--version").Output()
-		fmt.Printf("✅ %s\n", strings.TrimSpace(string(out)))
+		version := strings.TrimSpace(string(out))
+		major, err := parseNodeMajor(version)
+		switch {
+		case err != nil:
+			fmt.Printf("⚠️  %s（无法解析版本）\n", version)
+			ok = false
+		case major < requiredNodeMajor:
+			fmt.Printf("❌ %s（需要 v%d+）\n", version, requiredNodeMajor)
+			ok = false
+		default:
+			fmt.Printf("✅ %s\n", version)
+		}
 	} else {
 		fmt.Println("❌ 未安装")
+		ok = false
+	}
+
+	// Runtime
+	fmt.Print("  Runtime: ")
+	if runtimeDir != "" {
+		fmt.Printf("✅ %s\n", absPath(runtimeDir))
+	} else {
+		fmt.Println("❌ 未找到 runtime 目录")
+		ok = false
+	}
+
+	// System bin
+	fmt.Print("  System bin: ")
+	if runtimeDir == "" {
+		fmt.Println("⚠️  跳过（未定位 runtime）")
+	} else {
+		systemBinDir := findSystemBinDir(runtimeDir)
+		if missing := findMissingSystemBinaries(systemBinDir); len(missing) > 0 {
+			fmt.Printf("❌ %s（缺少 %s）\n", absPath(systemBinDir), strings.Join(missing, ", "))
+			ok = false
+		} else {
+			fmt.Printf("✅ %s\n", absPath(systemBinDir))
+		}
+	}
+
+	// tsx
+	fmt.Print("  tsx: ")
+	if runtimeDir == "" {
+		fmt.Println("⚠️  跳过（未定位 runtime）")
+	} else if tsx := findTsxBinary(runtimeDir); tsx != "" {
+		fmt.Printf("✅ %s\n", tsx)
+	} else if hasCommand("pnpm") {
+		fmt.Println("⚠️  未找到本地 tsx，将回退到 pnpm exec tsx")
+		ok = false
+	} else {
+		fmt.Println("❌ 未找到 tsx 运行器")
 		ok = false
 	}
 
@@ -318,6 +382,17 @@ func doctor() {
 		ok = false
 	}
 
+	// better-sqlite3 / mtcute
+	fmt.Print("  Native modules: ")
+	if runtimeDir == "" || !hasCommand("node") {
+		fmt.Println("⚠️  跳过（缺少 runtime 或 Node.js）")
+	} else if err := checkNodeRuntime(runtimeDir); err != nil {
+		fmt.Printf("❌ %s\n", err)
+		ok = false
+	} else {
+		fmt.Println("✅ better-sqlite3 + @mtcute/node")
+	}
+
 	// Skills
 	fmt.Print("  Skills: ")
 	if skillDir := findSkillDir(); skillDir != "" {
@@ -331,16 +406,48 @@ func doctor() {
 	fmt.Print("  配置: ")
 	if _, err := os.Stat(envFile); err == nil {
 		fmt.Println("✅ .env 存在")
+		envVars, err := loadEnvFile(envFile)
+		fmt.Print("  配置项: ")
+		if err != nil {
+			fmt.Printf("❌ %v\n", err)
+			ok = false
+		} else {
+			check := validateEnvFile(envVars)
+			switch {
+			case len(check.Missing) > 0 || len(check.Invalid) > 0:
+				parts := make([]string, 0, len(check.Missing)+len(check.Invalid))
+				if len(check.Missing) > 0 {
+					parts = append(parts, "缺少 "+strings.Join(check.Missing, ", "))
+				}
+				if len(check.Invalid) > 0 {
+					parts = append(parts, "非法 "+strings.Join(check.Invalid, ", "))
+				}
+				fmt.Printf("❌ %s\n", strings.Join(parts, "；"))
+				ok = false
+			default:
+				fmt.Println("✅ 关键字段齐全")
+			}
+			if len(check.LegacyOnly) > 0 {
+				fmt.Print("  旧字段: ")
+				fmt.Printf("❌ 检测到 %s；Alice 现在只读取 LLM_*\n", strings.Join(check.LegacyOnly, ", "))
+				ok = false
+			} else if len(check.LegacySeen) > 0 {
+				fmt.Print("  旧字段: ")
+				fmt.Printf("⚠️  检测到 %s；当前以 LLM_* 为准\n", strings.Join(check.LegacySeen, ", "))
+			}
+		}
 	} else {
 		fmt.Println("⚠️  .env 不存在，运行 alice init")
+		fmt.Println("  配置项: ⚠️  跳过")
 	}
 
 	fmt.Println()
 	if ok {
 		fmt.Println("✅ 环境检查通过")
-	} else {
-		fmt.Println("❌ 环境不完整，请安装缺失的依赖")
+		return
 	}
+	fmt.Println("❌ 环境不完整，请安装缺失的依赖")
+	os.Exit(1)
 }
 
 // ── 辅助函数 ───────────────────────────────────────────────────────
@@ -353,6 +460,12 @@ func hasCommand(name string) bool {
 func absPath(path string) string {
 	abs, _ := filepath.Abs(path)
 	return abs
+}
+
+func parseNodeMajor(version string) (int, error) {
+	version = strings.TrimSpace(strings.TrimPrefix(version, "v"))
+	parts := strings.SplitN(version, ".", 2)
+	return strconv.Atoi(parts[0])
 }
 
 func findRuntimeDir() string {
@@ -390,6 +503,25 @@ func findRuntimeDir() string {
 	return ""
 }
 
+func findSystemBinDir(runtimeDir string) string {
+	if dir := os.Getenv("ALICE_SYSTEM_BIN_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(runtimeDir, "dist", "bin")
+}
+
+func findMissingSystemBinaries(systemBinDir string) []string {
+	missing := make([]string, 0, len(requiredSystemBinaries))
+	for _, name := range requiredSystemBinaries {
+		path := filepath.Join(systemBinDir, name)
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
 func findSkillDir() string {
 	candidates := []string{"dist/bin", "skills/store", "/usr/local/lib/alice/skills"}
 	for _, dir := range candidates {
@@ -398,6 +530,189 @@ func findSkillDir() string {
 		}
 	}
 	return ""
+}
+
+func readEnvTemplate() ([]byte, error) {
+	candidates := []string{".env.example"}
+	if runtimeDir := findRuntimeDir(); runtimeDir != "" {
+		candidates = append([]string{filepath.Join(runtimeDir, ".env.example")}, candidates...)
+	}
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(data)) != "" {
+			return data, nil
+		}
+	}
+	return []byte(defaultEnvTemplate), nil
+}
+
+func loadEnvFile(path string) (map[string]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	env := make(map[string]string)
+	scanner := bufio.NewScanner(file)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		idx := strings.IndexRune(line, '=')
+		if idx <= 0 {
+			return nil, fmt.Errorf("%s:%d: 无效行 %q", path, lineNo, line)
+		}
+		key := strings.TrimSpace(line[:idx])
+		value := strings.TrimSpace(line[idx+1:])
+		value = strings.Trim(value, `"'`)
+		env[key] = value
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
+func appendEnvVars(base []string, extra map[string]string) []string {
+	merged := append([]string(nil), base...)
+	existing := make(map[string]struct{}, len(base))
+	for _, item := range base {
+		if idx := strings.IndexRune(item, '='); idx > 0 {
+			existing[item[:idx]] = struct{}{}
+		}
+	}
+	for key, value := range extra {
+		if _, ok := existing[key]; ok {
+			continue
+		}
+		merged = append(merged, key+"="+value)
+	}
+	return merged
+}
+
+func setEnvValue(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+type envValidation struct {
+	Missing    []string
+	Invalid    []string
+	LegacySeen []string
+	LegacyOnly []string
+}
+
+func validateEnvFile(env map[string]string) envValidation {
+	result := envValidation{}
+	required := []string{"TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE", "LLM_API_KEY"}
+	for _, key := range required {
+		if strings.TrimSpace(env[key]) == "" {
+			result.Missing = append(result.Missing, key)
+		}
+	}
+	if apiID := strings.TrimSpace(env["TELEGRAM_API_ID"]); apiID != "" {
+		if _, err := strconv.Atoi(apiID); err != nil {
+			result.Invalid = append(result.Invalid, "TELEGRAM_API_ID")
+		}
+	}
+	legacy := map[string]string{
+		"OPENAI_API_KEY":  "LLM_API_KEY",
+		"OPENAI_BASE_URL": "LLM_BASE_URL",
+		"OPENAI_MODEL":    "LLM_MODEL",
+	}
+	for oldKey, newKey := range legacy {
+		if strings.TrimSpace(env[oldKey]) == "" {
+			continue
+		}
+		result.LegacySeen = append(result.LegacySeen, oldKey)
+		if strings.TrimSpace(env[newKey]) == "" {
+			result.LegacyOnly = append(result.LegacyOnly, oldKey)
+		}
+	}
+	sort.Strings(result.Missing)
+	sort.Strings(result.Invalid)
+	sort.Strings(result.LegacySeen)
+	sort.Strings(result.LegacyOnly)
+	return result
+}
+
+func newRuntimeCommand(runtimeDir string) (*exec.Cmd, string, error) {
+	script := filepath.Join(runtimeDir, "src/index.ts")
+	if tsx := findTsxBinary(runtimeDir); tsx != "" {
+		return exec.Command(tsx, script), "", nil
+	}
+	if hasCommand("pnpm") {
+		return exec.Command("pnpm", "--dir", runtimeDir, "exec", "tsx", "src/index.ts"), "⚠️  未找到本地 tsx，回退到 pnpm exec tsx", nil
+	}
+	return nil, "", fmt.Errorf("需要 Node.js + pnpm/tsx")
+}
+
+func findTsxBinary(runtimeDir string) string {
+	seen := make(map[string]struct{})
+	for _, root := range candidateNodeRoots(runtimeDir) {
+		if root == "" {
+			continue
+		}
+		candidate := filepath.Clean(filepath.Join(root, "node_modules", ".bin", "tsx"))
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func candidateNodeRoots(runtimeDir string) []string {
+	runtimeAbs := absPath(runtimeDir)
+	return []string{
+		runtimeDir,
+		filepath.Dir(runtimeDir),
+		runtimeAbs,
+		filepath.Dir(runtimeAbs),
+		".",
+		"..",
+	}
+}
+
+func checkNodeRuntime(runtimeDir string) error {
+	cmd := exec.Command(
+		"node",
+		"--input-type=module",
+		"-e",
+		"await import('better-sqlite3'); await import('@mtcute/node');",
+	)
+	cmd.Dir = runtimeDir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		msg = err.Error()
+	}
+	if idx := strings.IndexByte(msg, '\n'); idx >= 0 {
+		msg = msg[:idx]
+	}
+	return fmt.Errorf("%s", msg)
 }
 
 func writePidFile(pid int, logFile string) {

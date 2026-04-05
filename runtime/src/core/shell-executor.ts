@@ -13,6 +13,7 @@ import { ALICE_HOME, executeAliceSandboxProcess } from "../skills/container-runn
 import { buildInstalledSkillEnv } from "../skills/registry.js";
 import { createLogger } from "../utils/logger.js";
 import type { ScriptExecutionResult } from "./script-execution.js";
+import { validateScript } from "./script-validator.js";
 
 const log = createLogger("shell-executor");
 const ACTION_PREFIX = "__ALICE_ACTION__:";
@@ -166,6 +167,15 @@ export async function executeShellScript(
 
   if (!processed) {
     result.errors.push("Empty shell script");
+    result.duration = Date.now() - startedAt;
+    return result;
+  }
+
+  const validation = validateScript(processed);
+  if (!validation.valid) {
+    result.instructionErrors.push(
+      ...validation.errors.map((err) => `line ${err.line}: ${err.message}`),
+    );
     result.duration = Date.now() - startedAt;
     return result;
   }

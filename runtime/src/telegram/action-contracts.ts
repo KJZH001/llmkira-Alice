@@ -125,7 +125,7 @@ export const listStickersContract = resultContract(
     for (const s of data.slice(0, 15)) {
       m.line(`${s.shortName} — "${s.title}" (${s.count} stickers)`);
     }
-    m.line("→ Use `irc sticker <keyword>` to send — just describe the emotion you want.");
+    m.line("→ Use `irc sticker --keyword <keyword>` to send — just describe the emotion you want.");
     return m.build();
   },
 );
@@ -142,7 +142,9 @@ export const getStickerSetContract = resultContract(
       if (!s.emoji) continue;
       m.line(`${s.emoji}`);
     }
-    m.line("→ Use `irc sticker <keyword>` — describe the emotion you want (e.g. '开心大笑').");
+    m.line(
+      "→ Use `irc sticker --keyword <keyword>` — describe the emotion you want (e.g. '开心大笑').",
+    );
     return m.build();
   },
 );
@@ -274,7 +276,16 @@ export const createInviteLinkContract = resultContract(
   z.string().min(1),
   "target",
   "last_invite_link",
-  (link) => [`Invite link: ${link}`],
+  (link) => {
+    const normalized = link
+      .split(/\s+/)
+      .map((part) => part.trim())
+      .find((part) => part.length > 0);
+    if (!normalized) return null;
+    const m = new PromptBuilder();
+    m.kv("Invite link", normalized);
+    return m.build();
+  },
 );
 
 export const commandOutputContract = resultContract(

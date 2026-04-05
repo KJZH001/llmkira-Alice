@@ -4,12 +4,10 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../config.js";
-import { collectAllTools } from "../engine/tick/affordance-filter.js";
 import { createBlackboard } from "../engine/tick/blackboard.js";
 import { buildTickPrompt, type TickPromptContext } from "../engine/tick/prompt-builder.js";
 import type { FeatureFlags } from "../engine/tick/types.js";
 import { initProviders } from "../llm/client.js";
-import { TELEGRAM_ACTIONS } from "../telegram/actions/index.js";
 import { createEvalFixture, setupEvalDb, teardownEvalDb } from "./fixtures.js";
 import { ALL_SCENARIOS } from "./scenarios/index.js";
 
@@ -36,7 +34,6 @@ try {
     hasSystemThreads: false,
     hasVideo: !!config.youtubeApiKey,
   };
-  const allTools = collectAllTools(fx.dispatcher.mods, TELEGRAM_ACTIONS);
   const board = createBlackboard({
     pressures: fx.ctx.getCurrentPressures(),
     voice: fx.item.action,
@@ -57,7 +54,7 @@ try {
     round: 0,
     nowMs: fx.nowMs,
   };
-  const { system, user } = await buildTickPrompt(board, allTools, promptCtx);
+  const { system, user } = await buildTickPrompt(board, promptCtx);
 
   const dir = "eval-dump-greeting";
   mkdirSync(dir, { recursive: true });
