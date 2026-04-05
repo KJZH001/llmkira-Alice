@@ -68,7 +68,7 @@ function buildRunnerOptions(opts: AliceSandboxExecOptions): DockerExecOptions {
     memory: opts.memory,
     timeout: opts.timeout,
     cwd: opts.cwd,
-    isolation: opts.isolation ?? "sandboxed",
+    isolation: opts.isolation ?? "container",
     env: buildInstalledSkillContainerEnv({
       skillName: opts.skillName,
       extraEnv: {
